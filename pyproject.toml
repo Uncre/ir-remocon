@@ -1,0 +1,40 @@
+[project]
+name = "ir-remocon"
+version = "0.2.0"
+description = "ESP32 を使った家電操作用スマートIRリモコン (FastAPI バックエンド)"
+# デプロイ先の Linux 機が Python 3.10 のため下限を 3.10 に合わせる
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "jinja2>=3.1",
+    "pydantic>=2.9",
+    # APScheduler 4.x は API が全面的に別物 (next_run_time / trigger.fields が無い)。
+    # 3.x 系に固定して、バージョン差による予約機能の破損を防ぐ。
+    "apscheduler>=3.10,<4",
+    "sqlalchemy>=2.0",
+]
+
+[project.scripts]
+# uv run ir-remocon でどのディレクトリからでも起動できる
+ir-remocon = "ir_remocon.app.main:run"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+# uv sync で editable インストールされるため、カレントディレクトリに関係なく
+# `python -m ir_remocon.app.main` が解決できる。
+# データファイル (DB/templates/static) は editable のためソースツリー上の実体を指す。
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ir_remocon"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

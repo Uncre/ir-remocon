@@ -1,0 +1,20 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# ログ (RotatingFileHandler が生成)
+*.log
+*.log.*
+
+# SQLite の WAL / 共有メモリ 
+*.db-wal
+*.db-shm
+
+# DB 本体
+*.db
+
+# 移行ツールが作るバックアップ
+*.bak
+backup_before_refactor/
