@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config, esp32, repository
 from .db import init_db
 from .logging_conf import setup_logging
-from .routers import send, signals
+from .routers import devices, send, signals
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,7 @@ def create_app() -> FastAPI:
 
     app.include_router(signals.router)
     app.include_router(send.router)
+    app.include_router(devices.router)
 
     # static/ は Phase 5 で作る。存在しないディレクトリを StaticFiles に渡すと
     # マウント時点で RuntimeError になりサーバが起動しないので、ガードする。
@@ -140,7 +141,7 @@ def create_app() -> FastAPI:
         """
         return {
             "status": "ok",
-            "phase": 2,
+            "phase": 3,
             "note": "UI は Phase 5 で実装します。API ドキュメント: /docs",
         }
 

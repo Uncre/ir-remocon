@@ -26,8 +26,8 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 |---|---|---|
 | 1 | 土台: config / db / logging（+ models） | ✅ **完了・検証済み** (2026-08-18) |
 | 2 | ESP32 通信レイヤ: 送信の直列化・失敗を握り潰さない | ✅ **完了・検証済み** (2026-08-18) |
-| 3 | 機器登録と IP 管理（`esp32_ip` → `device_id`） | ⬜ 未着手 ← **次はここ** |
-| 4 | スケジューラ堅牢化（health / 中断可能アラーム / メタ情報） | ⬜ 未着手 |
+| 3 | 機器登録と IP 管理（`esp32_ip` → `device_id`） | ✅ **完了・検証済み** (2026-08-18) |
+| 4 | スケジューラ堅牢化（health / 中断可能アラーム / メタ情報） | ⬜ 未着手 ← **次はここ** |
 | 5 | フロントエンド（タブUI・static分割・体感バグ修正） | ⬜ 未着手 |
 | 6 | ESP32 ファーム（`esp/ir_remocon.ino`）※書き込みは後日 | ⬜ 未着手 |
 | 7 | 周辺整備（README / migrate_jobs / 追加テスト） | ⬜ 未着手 |
@@ -91,6 +91,60 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 - **読み取りタイムアウトはリトライ禁止。** 現ファームは `irsend.sendRaw()` 完了後に応答するので、
   再送はトグル型信号の二度打ち＝状態反転を意味する。リトライは `ConnectError` のみ 1 回。
 
+### Phase 3 で完成したもの
+
+計画の全文: `C:\Users\UncrewedSloth\.claude\plans\phase3-logical-neumann.md`
+
+| ファイル | 役割 |
+|---|---|
+| `ir_remocon/app/routers/devices.py` | **本フェーズの中心。** 機器 CRUD + 接続テスト |
+| `ir_remocon/app/repository.py` | 機器の書き込み系を追加（`create_device` / `update_device` / `delete_device` / `_set_default`）。例外に `ConstraintViolation`(409) |
+| `ir_remocon/app/models.py` | `DeviceStatusOut` を実際の形に、`DeviceDeletedOut` 追加、入力モデルに `extra="forbid"` |
+| `tests/test_devices.py` | 26 件。単体は計 110 件 / 統合 8 件 |
+
+**スキーマ変更なし**（`devices` テーブルは Phase 1 で作成済み）。本番 DB は無変更で、
+検証は `IR_DB_PATH` を一時 DB に向けて行った。
+
+この層が守る不変条件は 2 つ。破れると送信経路が丸ごと死ぬ:
+
+1. **機器は常に 1 台以上存在する** — 0 台になると `resolve_device()` が 404 を投げ、送信も予約も全滅
+2. **既定機器は常にちょうど 1 台** — 破れても即死しないが「既定は無いのに送信は動く」不可解な状態になる
+
+実測で確認済みの事実（スタブ使用、実機不要）:
+
+| 確認 | 結果 |
+|---|---|
+| **[E] host 変更の即時反映** | `PUT /api/devices/1 {"host": ...}` → **次の送信から新 host へ**（再起動も予約作り直しも不要） |
+| **接続テスト（不可）** | **200 + `reachable:false`** + `detail` に理由。502 にはしない |
+| **接続テスト（可）** | `reachable:true` + ESP の `/status` 中身（`send_count` 等）をそのまま返す |
+| **host 正規化** | `"http://127.0.0.1:8080/"` → DB には `"127.0.0.1:8080"` |
+| **既定の排他** | 2 台目を `is_default:true` で登録 → 1 台目のフラグが自動で降りる（常に 1 台） |
+| **既定を外す PUT** | **409** `ConstraintViolation`（「先に別の機器を既定に」） |
+| **最後の 1 台の削除** | **409**。機器は残り送信も生きたまま |
+| **既定機器の削除** | 最若番を自動昇格し、`new_default_device_id` をレスポンスに明記（黙って変えない） |
+| **削除済み機器を明示指定して送信** | **404**。黙って既定機器に送らない |
+| **タイプミス `is_defualt`** | **422**（`extra="forbid"`）。既定にしたつもりが違う、を防ぐ |
+| **本番 DB** | 既存信号 2 件・機器 1 件は無傷 |
+
+#### Phase 3 の設計上の決定
+
+- **`GET /api/devices/{id}/status` は、このプロジェクト唯一の `try/except` を持つルータ。**
+  「ルータに try/except を書かない」ルールへの**意図的な例外**として `devices.py` に明記してある。
+  理由: このエンドポイントの成果物は「到達できたか」そのものなので、到達不可は API の失敗では
+  なく**テストの正常な結果**。502 にするとフロントが「疎通確認という操作が失敗した」のか
+  「機器に到達できなかった」のかを区別できない。**捕まえるのは `Esp32Error` だけ**で、
+  機器 id が無い場合の `NotFound` は素通りさせて 404 にする（握り潰しの範囲を最小に保つ）。
+- **host は repository でも `normalize_host()` を通して保存する。** API 経由なら Pydantic が
+  正規化するが、Phase 4 のスケジューラや `tools/` から直接呼ぶと素通りする。そして
+  `esp32._states` の**ロック登録簿は host 文字列がキー**なので、`192.168.1.4` と
+  `http://192.168.1.4/` が別エントリになると同一機器への直列化（バグ C の修正）が静かに壊れる。
+- **機器の登録・更新時に疎通確認はしない。** ESP の電源が入っていなくても先に登録できるべき
+  （Phase 6 で静的 IP を焼く前にサーバ側の設定を用意する運用になる）。
+- host を変更すると `esp32._states` に旧 host のエントリが残る。ロック 1 個分なので実害なし。
+  掃除は入れていない（掃除中に旧 host へ進行中の送信があるとロックを取り違えるため）。
+- `test_root_does_not_serve_legacy_ui` はフェーズ番号ではなく **「HTML を返していないこと」** を
+  見る形に変えた。番号を assert すると毎フェーズ書き換えるだけのテストになる。
+
 ### ⚠️ 現在は新旧が同居している
 
 - **旧実装 `ir_remocon/ir_db_server.py` はまだ削除していない**（動く状態のまま残置）。
@@ -99,10 +153,10 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 - **新サーバの `/` は JSON スタブを返す。** 旧 `templates/index.html` は配信していない。
   旧 UI は送信時に `esp32_ip` を送るが新 API は `device_id` 参照なので、配信すると
   「押しても効かない画面」になるため。旧 UI を触りたいときは旧モノリスを起動する。
-- **Phase 2〜3 の間、新サーバに予約機能は存在しない**（スケジューラは Phase 4）。
+- **新サーバに予約機能はまだ存在しない**（スケジューラは Phase 4）。
   新アプリは `jobs.db` を一切開かない。既存 7 件は既に死んでいる（不具合 D）ので実害なし。
-- **機器の編集 API はまだ無い**（Phase 3）。検証で host を変えたいときは `IR_DB_PATH` で
-  別 DB を作り、`UPDATE devices SET host=...` で直接書き換える。
+- 検証で host を変えたいときは `IR_DB_PATH` で別 DB を作り、
+  `PUT /api/devices/{id}` で変更する（Phase 3 で API 化済み。DB 直書きは不要）。
 
 ---
 
@@ -129,6 +183,21 @@ uv add <pkg>                              # 依存追加（pip は使わない�
 | `--callback-fail` | 学習コールバックを送らない（「学習が時々失敗する」の切り分け用） |
 
 > 接続拒否（502）を試すときは、スタブを起動しないか別ポートを指すだけでよい。
+
+スタブに向けて手動確認するときの定型（本番 DB を触らない）:
+
+```powershell
+# ターミナル A
+uv run python tools/fake_esp32.py --port 8080
+# ターミナル B
+$env:IR_DB_PATH = "$env:TEMP\ir_scratch.db"; $env:IR_ADVERTISE_HOST = "127.0.0.1"; uv run ir-remocon
+# ターミナル C: 機器の host をスタブに向ける（http:// も末尾 / も正規化される）
+curl.exe -s -X PUT "http://127.0.0.1:8102/api/devices/1" -H "Content-Type: application/json" -d '{\"host\":\"http://127.0.0.1:8080/\"}'
+```
+
+> PowerShell 5.1 の `Invoke-RestMethod` はエラー応答の本文を読めない。**4xx/5xx の
+> `detail` を確認したいときは `curl.exe -s -w "\nHTTP %{http_code}\n"` を使うこと。**
+> 日本語のログを読むときは `Get-Content -Encoding UTF8`（既定の ANSI だと文字化けする）。
 
 デプロイ先（Linux）:
 ```bash
@@ -176,7 +245,7 @@ cd ~/python_works/ir_remocon && uv sync --frozen && uv run python -m ir_remocon.
 | B | 送信失敗でも UI に「成功」と出る | `send_signal_to_esp32` が例外を握り潰して常に 200 | ✅ **2 で解消** |
 | C | 連打すると全部タイムアウト | サーバ側に直列化なし + ESP 側が非同期ハンドラ内で `irsend.sendRaw()` を同期実行し TCP ごとブロック | ✅ **サーバ側は 2 で解消** / ESP 側は 6 |
 | D | 予約が数ヶ月間 1 件も発火していない | `sqlite3.OperationalError: database or disk is full` で APScheduler スレッドが死亡。誰も検知できなかった | 4 |
-| E | IP を変えると既存予約が全滅 | ジョブ引数に IP が pickle されている（古いジョブが今も `192.168.1.16` を叩いている） | 3 |
+| E | IP を変えると既存予約が全滅 | ジョブ引数に IP が pickle されている（古いジョブが今も `192.168.1.16` を叩いている） | ✅ **3 で解消**（host は DB の 1 行のみ。ジョブ引数の `device_id` 化は Phase 4 で実施） |
 | F | 朝 9 時前だと予約日付が前日になる | `toISOString()`（UTC）で日付デフォルトを生成。時刻側は現地時刻で不整合 | 5 |
 | G | 目覚まし中に他の予約が取りこぼされる | `time.sleep` でワーカースレッドを占有。中断手段も無い | 4 |
 | H | その他（naive/aware 比較で予約一覧が 500、リネーム衝突で 500、CWD 依存、XSS、`[object Object]` 表示、ESP のボディ分割未対応、JSON バッファ溢れ 等） | — | 各所 |
@@ -210,8 +279,16 @@ cd ~/python_works/ir_remocon && uv sync --frozen && uv run python -m ir_remocon.
   「機器がビジーです。少し待ってください」と描画すること。**
 - **開発機の環境問題**: `C:\Users\UncrewedSloth\AppData\Local\Temp\pytest-of-UncrewedSloth`
   のアクセス権が壊れており、そのままだと `tmp_path` を使う全テストが `PermissionError`
-  （WinError 5）で落ちる。当該ディレクトリを削除するか、
-  `$env:PYTEST_DEBUG_TEMPROOT` に別の場所を指定すれば回避できる。**コード側の問題ではない。**
+  （WinError 5）で落ちる。**コード側の問題ではない。** 回避手順（Phase 3 で実証済み）:
+
+  ```powershell
+  New-Item -ItemType Directory -Force "$env:TEMP\pytest-ir" | Out-Null   # 先に作ること
+  $env:PYTEST_DEBUG_TEMPROOT = "$env:TEMP\pytest-ir"
+  uv run pytest -q
+  ```
+
+  ディレクトリを作らずに `PYTEST_DEBUG_TEMPROOT` だけ設定すると、今度は全テストが
+  `FileNotFoundError`（WinError 3）になる。pytest は temproot を自動生成しない。
 
 ---
 
@@ -231,23 +308,43 @@ cd ~/python_works/ir_remocon && uv sync --frozen && uv run python -m ir_remocon.
 - **フロントはビルド不要の素の JS を維持**。`templates/index.html` は骨格のみにし、
   `static/style.css` と `static/app.js` に分離する。
 
-### 次フェーズへの具体的な申し送り（Phase 2 で決まったこと）
+### 次フェーズへの具体的な申し送り
 
-- **Phase 3**: 「最後の 1 台は削除禁止」のガードを入れること。機器が 0 台になると
-  `repository.resolve_device()` が 404 を投げて**送信が全部死ぬ**。
-  `repository.py` の機器まわりは読み取り関数だけ実装済み（`list_devices` / `get_device` /
-  `get_default_device` / `resolve_device`）。`is_default` の排他制御（1 台だけ立てる UPDATE）は未実装。
-- **Phase 4**: 目覚ましアラームは `esp32.send_raw(..., lock_timeout=短い値)` を渡して、
+#### Phase 4（スケジューラ）— Phase 3 から
+
+- **ジョブ引数は `[signal_name, device_id]` / `[on, off, interval, duration, device_id]`。**
+  実行関数は**発火のたびに `repository.resolve_device(device_id)` を呼ぶ**こと。
+  host を引数に入れた瞬間に不具合 E が復活する（旧実装がまさにそれで、古いジョブが
+  今も `192.168.1.16` を叩き続けている）。`device_id=None` なら既定機器に解決される。
+- **参照先の機器が削除済みだとジョブ実行時に `repository.NotFound` が飛ぶ。**
+  Phase 3 で「最後の 1 台は削除禁止」を入れたので送信先が消えることはないが、
+  ジョブが名指ししている機器が消える経路は残る。`EVENT_JOB_ERROR` リスナと
+  `/api/health` の `last_job_error` で**必ず可視化する**こと。黙って失敗させると不具合 D の再来。
+- `/api/health` に機器台数と既定機器名を含めるか検討（設定ミスの自己診断に効く）。
+- 目覚ましアラームは `esp32.send_raw(..., lock_timeout=短い値)` を渡して、
   ロックが取れなければ 1 拍スキップさせること（待ちを積み上げない）。この引数は既に用意してある。
   また `repository.upsert_signal()` も実装済みなので Phase 5 のコールバックで使える。
-- **Phase 5 の UI 表示**:
+#### Phase 5（フロントエンド）
+
+- **設定タブは `/api/devices` を使う。** IP 直書き入力は廃止。機器のプルダウン + 編集 +
+  「接続テスト」ボタン（`GET /api/devices/{id}/status`）。
+  - **接続テストは失敗しても 200 が返る。** `reachable` の真偽で描き分けること
+    （HTTP ステータスで判定すると常に「成功」になる）。`host` も返しているので
+    「どのアドレスを叩いたか」を画面に出せる — 設定ミスにユーザが自力で気づける。
+  - 既定を外す PUT / 最後の 1 台の削除は **409 `ConstraintViolation`** で返る。
+    `detail` に日本語の理由と次の操作が入っているので、そのまま出せばよい。
+  - 既定機器を削除すると `new_default_device_id` が返る。**送信先が変わったことを
+    ユーザに見せること**（黙って変わったように見せない）。
+- **UI 表示のルール**:
   - 409 → 「エラー」ではなく「機器がビジーです。少し待ってください」
   - 504（`outcome_unknown: true`）→ 「失敗しました」ではなく**「送信できたか不明です」**
   - エラーレスポンスは `{"detail", "error", "host", "outcome_unknown"}` の形。`detail` は
     FastAPI の `HTTPException` と同じキーなので、422 の配列形式だけ別処理すればよい。
   - 学習中は送信ボタンを無効化すること。ESP は `currentMode` 1 本の状態機械なので、
     受信モード中の送信は必ず 409 になる。
-- **Phase 6 で決めること**: 202 が証明するのは「キューに入れた」ことだけで、赤外線が出たことでは
+#### Phase 6（ESP32 ファーム）
+
+- **決めること**: 202 が証明するのは「キューに入れた」ことだけで、赤外線が出たことでは
   ない（現在の 200 も「ハンドラが走った」までしか証明しない）。UI の言い回しを弱めるか、
   `/status` の `send_count` の増分をポーリングして実発射を確認するかを選ぶ。
   `esp32.send_raw()` の docstring にもこの限界を明記してある。

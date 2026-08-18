@@ -64,7 +64,11 @@ def test_empty_raw_data_is_422(client):
 
 
 def test_root_does_not_serve_legacy_ui(client):
-    """旧 index.html は配信しない (esp32_ip 前提なので操作できない)。"""
+    """旧 index.html は配信しない (esp32_ip 前提なので操作できない)。
+
+    フェーズ番号ではなく「HTML を返していないこと」を見る。番号を assert すると
+    フェーズが進むたびにこのテストを書き換えることになり、何も守らなくなる。
+    """
     response = client.get("/")
     assert response.status_code == 200
-    assert response.json()["phase"] == 2
+    assert "text/html" not in response.headers["content-type"]

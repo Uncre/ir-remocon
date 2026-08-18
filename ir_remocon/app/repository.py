@@ -18,6 +18,7 @@ import sqlite3
 from typing import Any, Optional
 
 from .db import get_conn, utcnow_iso
+from .models import normalize_host
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,17 @@ class NotFound(RepositoryError):
 
 
 class DuplicateName(RepositoryError):
+    http_status = 409
+
+
+class ConstraintViolation(RepositoryError):
+    """業務上の不変条件に反する操作。
+
+    「最後の 1 台の機器を削除する」「唯一の既定機器から既定フラグを外す」など、
+    DB 制約では表現できないがアプリとして許してはいけない操作を弾く。
+    どちらも許すと :func:`resolve_device` が 404 を投げ始め、**送信が全部死ぬ**。
+    """
+
     http_status = 409
 
 
@@ -199,7 +211,14 @@ def delete_signal(name: str) -> None:
 # -----------------------------------------------------------------------------
 # 機器 (ESP32)
 # -----------------------------------------------------------------------------
-# 今フェーズでは読み取りのみ。作成/更新/削除と is_default の排他制御は Phase 3。
+# この層が守る不変条件は 2 つ。どちらも破れると送信経路が丸ごと死ぬ。
+#
+#   1. 機器は常に 1 台以上存在する
+#   2. 既定機器は常にちょうど 1 台
+#
+# 1 が破れると resolve_device() が 404 を投げ始め、送信も予約も全滅する。
+# 2 が破れても get_default_device() のフォールバックで即死はしないが、
+# 「既定を外したのに送信は動く」という説明のつかない状態になる。
 _DEVICE_COLUMNS = "id, name, host, is_default, created_at, updated_at"
 
 
@@ -254,7 +273,170 @@ def get_default_device() -> dict[str, Any]:
 
 
 def resolve_device(device_id: Optional[int]) -> dict[str, Any]:
-    """送信先の機器を決める。``device_id`` 省略時は既定機器。"""
+    """送信先の機器を決める。``device_id`` 省略時は既定機器。
+
+    Phase 4 のスケジューラは **ジョブの発火のたびに** これを呼ぶ。
+    ジョブ引数には ``device_id`` しか入れないので、host を変更すれば既存の予約すべてに
+    即座に反映される (旧実装は作成時の IP が pickle されて固定され、IP が変わると
+    予約が全滅していた = 不具合 E)。
+    """
     if device_id is None:
         return get_default_device()
     return get_device(device_id)
+
+
+def _set_default(conn: sqlite3.Connection, device_id: int, now: str) -> None:
+    """``device_id`` だけを既定にする。
+
+    「他を降ろす」と「自分を上げる」の 2 文を **同じトランザクション** で実行する。
+    ``get_conn()`` が正常終了で commit / 例外で rollback するので、既定 0 台という
+    中間状態が永続化されることはない。
+    """
+    conn.execute(
+        "UPDATE devices SET is_default = 0, updated_at = ? WHERE is_default = 1 AND id != ?",
+        (now, device_id),
+    )
+    conn.execute(
+        "UPDATE devices SET is_default = 1, updated_at = ? WHERE id = ? AND is_default = 0",
+        (now, device_id),
+    )
+
+
+def create_device(name: str, host: str, is_default: bool = False) -> dict[str, Any]:
+    """機器を登録する。
+
+    **疎通確認はしない。** ESP32 の電源が入っていなくても先に登録できるべきで、
+    「登録できない = 機器が壊れている」と誤解させたくない。接続確認は
+    :func:`esp32.get_status` を使う専用エンドポイントの仕事。
+    """
+    host = normalize_host(host)
+    now = utcnow_iso()
+    with get_conn() as conn:
+        # 機器が 0 台の状態 (DB を直接いじった場合にしか起きない) からの復旧経路。
+        # ここで既定フラグを立てておかないと、登録した直後なのに
+        # get_default_device() が警告付きフォールバックに落ちる。
+        count = conn.execute("SELECT COUNT(*) AS c FROM devices").fetchone()["c"]
+        if count == 0:
+            is_default = True
+
+        try:
+            cursor = conn.execute(
+                "INSERT INTO devices (name, host, is_default, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (name, host, 1 if is_default else 0, now, now),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateName(f"機器 '{name}' は既に存在します") from exc
+        new_id = cursor.lastrowid
+
+        if is_default:
+            _set_default(conn, new_id, now)
+
+        row = conn.execute(
+            f"SELECT {_DEVICE_COLUMNS} FROM devices WHERE id = ?", (new_id,)
+        ).fetchone()
+
+    logger.info("機器を登録しました: %s (%s, 既定=%s)", name, host, is_default)
+    return _row_to_device(row)
+
+
+def update_device(
+    device_id: int,
+    *,
+    name: Optional[str] = None,
+    host: Optional[str] = None,
+    is_default: Optional[bool] = None,
+) -> dict[str, Any]:
+    """機器を更新する。
+
+    host の変更は **次の送信から即座に効く**。ジョブも画面も device_id しか
+    保持していないため、再起動も予約の作り直しも不要 (不具合 E の解消)。
+    """
+    now = utcnow_iso()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name, is_default FROM devices WHERE id = ?", (device_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"機器 id={device_id} は登録されていません")
+
+        # 「既定を外す」は単独では許さない。外した結果 0 台になると
+        # 「既定は無いのに送信は動く (最若番へのフォールバック)」という
+        # 説明のつかない状態になる。別の機器を既定にすれば自動的に降りる。
+        if is_default is False and row["is_default"]:
+            raise ConstraintViolation(
+                f"機器 '{row['name']}' は既定機器です。"
+                "先に別の機器を既定に設定してください (既定は常に 1 台必要です)"
+            )
+
+        sets: list[str] = []
+        params: list[Any] = []
+        if name is not None:
+            sets.append("name = ?")
+            params.append(name)
+        if host is not None:
+            sets.append("host = ?")
+            params.append(normalize_host(host))
+        if sets:
+            sets.append("updated_at = ?")
+            params.append(now)
+            params.append(device_id)
+            try:
+                conn.execute(f"UPDATE devices SET {', '.join(sets)} WHERE id = ?", params)
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateName(f"機器 '{name}' は既に存在します") from exc
+
+        if is_default:
+            _set_default(conn, device_id, now)
+
+        updated = conn.execute(
+            f"SELECT {_DEVICE_COLUMNS} FROM devices WHERE id = ?", (device_id,)
+        ).fetchone()
+
+    logger.info(
+        "機器を更新しました: id=%d name=%s host=%s 既定=%s",
+        device_id, updated["name"], updated["host"], bool(updated["is_default"]),
+    )
+    return _row_to_device(updated)
+
+
+def delete_device(device_id: int) -> Optional[int]:
+    """機器を削除する。既定機器を消した場合は最若番を昇格させ、その id を返す。
+
+    :return: 昇格させた機器の id。昇格が起きなければ ``None``。
+    :raises ConstraintViolation: 最後の 1 台を削除しようとした場合。
+
+    最後の 1 台を守るのは、機器が 0 台になると :func:`resolve_device` が 404 を
+    投げ始めて **送信も予約も全部死ぬ** から。UI からの操作 1 回でシステムを
+    復旧不能にできてはいけない。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name, is_default FROM devices WHERE id = ?", (device_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"機器 id={device_id} は登録されていません")
+
+        count = conn.execute("SELECT COUNT(*) AS c FROM devices").fetchone()["c"]
+        if count <= 1:
+            raise ConstraintViolation(
+                f"機器 '{row['name']}' は最後の 1 台なので削除できません "
+                "(送信先が無くなります)。先に別の機器を登録してください"
+            )
+
+        conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+
+        promoted: Optional[int] = None
+        if row["is_default"]:
+            successor = conn.execute(
+                "SELECT id, name FROM devices ORDER BY id LIMIT 1"
+            ).fetchone()
+            _set_default(conn, successor["id"], utcnow_iso())
+            promoted = successor["id"]
+            logger.info(
+                "既定機器を削除したため '%s' (id=%d) を既定に昇格しました",
+                successor["name"], promoted,
+            )
+
+    logger.info("機器を削除しました: %s (id=%d)", row["name"], device_id)
+    return promoted

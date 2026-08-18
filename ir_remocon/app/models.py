@@ -76,11 +76,20 @@ class DeviceBase(BaseModel):
     _normalize_host = field_validator("host")(normalize_host)
 
 
+# ``extra="forbid"`` は入力モデルにだけ付ける。``{"is_defualt": true}`` のような
+# タイプミスが 200 で通ると「既定にしたつもりが既定になっていない」という静かな
+# 食い違いになる (SendRequest と同じ理由)。
+# DeviceBase 側には付けない — DeviceOut が継承しているため、列を 1 つ足すたびに
+# レスポンス検証が 500 になる罠を仕込むことになる。
 class DeviceCreate(DeviceBase):
+    model_config = ConfigDict(extra="forbid")
+
     is_default: bool = False
 
 
 class DeviceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[Annotated[str, Field(min_length=1, max_length=50)]] = None
     host: Optional[Annotated[str, Field(min_length=1, max_length=255)]] = None
     is_default: Optional[bool] = None
@@ -101,12 +110,32 @@ class DeviceOut(DeviceBase):
     updated_at: Optional[str] = None
 
 
+class DeviceDeletedOut(BaseModel):
+    """機器削除の結果。
+
+    既定機器を削除すると別の機器が自動で既定に昇格する。それを黙ってやると
+    「気づかないうちに送信先が変わっている」ことになるので、昇格先を明示して返す。
+    """
+
+    message: str
+    #: 既定に昇格した機器の id。昇格が起きなければ None。
+    new_default_device_id: Optional[int] = None
+
+
 class DeviceStatusOut(BaseModel):
-    """ESP32 の /status を叩いた結果 (設定タブの「接続テスト」用)。"""
+    """ESP32 の /status を叩いた結果 (設定タブの「接続テスト」用)。
+
+    到達できない場合も **200 でこの形** を返す。このエンドポイントの成果物は
+    「到達できたか」そのものなので、到達不可は API の失敗ではなくテストの正常な結果。
+    """
 
     reachable: bool
+    #: 実際に叩いた host。設定ミスをユーザが自力で気づけるように返す。
+    host: str
+    #: 到達できなかった理由 (reachable=True のときは None)。
     detail: Optional[str] = None
-    device: Optional[dict] = None
+    #: ESP32 の /status が返した中身そのまま (reachable=False のときは None)。
+    status: Optional[dict] = None
 
 
 # -----------------------------------------------------------------------------
