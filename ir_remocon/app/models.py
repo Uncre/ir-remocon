@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 #: 繰り返し種別
 RepeatType = Literal["once", "daily", "weekly"]
@@ -117,7 +117,15 @@ class SendRequest(BaseModel):
 
     旧実装ではフロントが毎回 ``esp32_ip`` を文字列で送っていたが、
     IP が変わるたびに全画面・全予約が壊れるため device_id 参照に変更した。
+
+    ``extra="forbid"`` は必須。Pydantic v2 の既定 (``extra="ignore"``) のままだと、
+    旧フロントが送る ``{"esp32_ip": "192.168.1.99"}`` が **422 にならず受理され**、
+    ``device_id=None`` として既定機器に送られてしまう。つまり
+    「ユーザは 192.168.1.99 を指定したのに 200 OK が返り、赤外線は別の機器に飛ぶ」
+    という、まさにこのリファクタが潰そうとしている「嘘の成功」を新たに作ることになる。
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     device_id: Optional[int] = None
 

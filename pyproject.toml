@@ -38,3 +38,7 @@ packages = ["ir_remocon"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 実ソケットを使う統合テストは既定でスキップする (単体は速く hermetic に保つ)。
+# 実配線を確認したいときは `uv run pytest -m integration`。
+markers = ["integration: 実ソケット経由の統合テスト (fake_esp32 を起動する)"]
+addopts = "-m 'not integration'"

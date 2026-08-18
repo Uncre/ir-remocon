@@ -47,6 +47,10 @@ ESP32_CONNECT_TIMEOUT = float(os.environ.get("IR_ESP32_CONNECT_TIMEOUT", "2.0"))
 ESP32_READ_TIMEOUT = float(os.environ.get("IR_ESP32_READ_TIMEOUT", "10.0"))
 #: 同一機器への送信間隔の下限(秒)。連打でESP32を詰まらせないためのスロットリング。
 MIN_SEND_INTERVAL = float(os.environ.get("IR_MIN_SEND_INTERVAL", "0.3"))
+#: 同一機器のロック待ちの上限(秒)。超えたら 409 を返して呼び出し側に判断を返す。
+#: 「接続 + 読み取りタイムアウトの合計」まで待つ設計にはしない。1 件詰まっているだけで
+#: クリックが 12 秒待たされ、その間 FastAPI のスレッドプールワーカーを 1 本占有するため。
+ESP32_LOCK_TIMEOUT = float(os.environ.get("IR_ESP32_LOCK_TIMEOUT", "5.0"))
 #: 赤外線の既定キャリア周波数(kHz)
 DEFAULT_FREQ_KHZ = int(os.environ.get("IR_DEFAULT_FREQ", "38"))
 
