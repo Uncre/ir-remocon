@@ -1,323 +1,214 @@
 <!DOCTYPE html>
+<!--
+  Smart IR Remote — 画面の骨格。
+
+  ここには構造しか書かない。中身はすべて static/js/ が組み立てる。
+
+  ★このファイルに required 属性を書いてはいけない（不具合 A の再発）。
+    旧実装は非表示の select に required を残しており、display:none の必須
+    コントロールが未入力のままブラウザの制約検証に引っかかって submit が
+    握り潰されていた。submit イベント自体が発火しないので JS のエラー表示すら
+    出ず、「予約ボタンが無反応」という体感バグの主犯になっていた。
+
+    対策は 2 段構え。
+      1. モードごとの入力を <fieldset> で包み、非表示側は disabled + hidden を
+         両方立てる（disabled な子孫は制約検証の対象外かつ送信対象外）
+      2. <form novalidate> でブラウザの検証自体を止め、検証は JS に一本化する
+    tests/test_frontend_assets.py が「required がゼロであること」を見張っている。
+-->
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart IR Remote</title>
-    <style>
-        :root {
-            --bg-color: #f4f7f9; --card-bg-color: #ffffff; --text-color: #333;
-            --primary-color: #007bff; --primary-hover-color: #0056b3; --success-color: #28a745;
-            --error-color: #dc3545; --info-color: #17a2b8; --danger-color: #c82333;
-            --border-color: #e0e0e0; --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        }
-        body { font-family: var(--font-family); background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 20px; display: flex; justify-content: center; }
-        .container { max-width: 800px; width: 100%; }
-        h1, h2 { text-align: center; color: var(--primary-color); }
-        .card { background-color: var(--card-bg-color); border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 20px; }
-        .section-title { border-bottom: 2px solid var(--primary-color); padding-bottom: 10px; margin-bottom: 20px; }
-        .input-group, .weekday-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, select { width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; }
-        .btn { padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; font-weight: bold; transition: background-color 0.2s; color: white; width: 100%; }
-        .btn-inline { width: auto; }
-        .btn-primary { background-color: var(--primary-color); } .btn-primary:hover { background-color: var(--primary-hover-color); }
-        .btn-info { background-color: var(--info-color); } .btn-info:hover { background-color: #138496; }
-        .btn-danger { background-color: var(--error-color); } .btn-danger:hover { background-color: var(--danger-color); }
-        .list { list-style: none; padding: 0; }
-        .list-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--border-color); flex-wrap: wrap; gap: 10px; }
-        .list-item:last-child { border-bottom: none; }
-        .item-name, .item-details { font-size: 1.1rem; flex-grow: 1; }
-        .item-details span { display: block; font-size: 0.9rem; color: #666; }
-        .button-group { display: flex; gap: 5px; }
-        #status-bar { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 5px; color: white; font-weight: bold; opacity: 0; transition: opacity 0.5s; pointer-events: none; z-index: 1000; }
-        #status-bar.success { background-color: var(--success-color); } #status-bar.error { background-color: var(--error-color); }
-        #status-bar.info { background-color: var(--info-color); } #status-bar.visible { opacity: 1; }
-        .weekday-group label { display: inline-block; margin-right: 15px; cursor: pointer; user-select: none;}
-        .hidden { display: none; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Smart IR Remote</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Smart IR Remote</h1>
-        <div class="card"><h2 class="section-title">設定</h2><div class="input-group"><label for="esp32-ip">ESP32のIPアドレス</label><input type="text" id="esp32-ip" value="192.168.1.4" placeholder="例: 192.168.1.4"></div></div>
-        <div class="card"><h2 class="section-title">信号の学習</h2><form id="receive-form"><div class="input-group"><label for="new-signal-name">新しい信号の名前</label><input type="text" id="new-signal-name" placeholder="例: living_light_on" required></div><button type="submit" class="btn btn-primary">学習開始</button></form></div>
-        <div class="card"><h2 class="section-title">リモコン操作</h2><ul id="signal-list" class="list"></ul></div>
-        
-        <div class="card">
-            <h2 class="section-title">送信予約</h2>
-            <form id="schedule-form">
-                <div class="input-group">
-                    <label for="schedule-type">予約の種類</label>
-                    <select id="schedule-type">
-                        <option value="single" selected>単発送信</option>
-                        <option value="wakeup">目覚まし</option>
-                    </select>
-                </div>
-
-                <!-- 単発送信用フォーム -->
-                <div id="single-schedule-inputs">
-                    <div class="input-group"><label for="signal-select">信号を選択</label><select id="signal-select" required></select></div>
-                </div>
-
-                <!-- 目覚まし用フォーム -->
-                <div id="wakeup-schedule-inputs" class="hidden">
-                    <div class="input-group"><label for="on-signal-select">ON信号</label><select id="on-signal-select" required></select></div>
-                    <div class="input-group"><label for="off-signal-select">OFF信号</label><select id="off-signal-select" required></select></div>
-                    <div class="input-group"><label for="interval-seconds">間隔 (秒)</label><input type="number" id="interval-seconds" value="1.5" min="0.1" step="0.1" required></div>
-                    <div class="input-group"><label for="duration-seconds">持続時間 (秒)</label><input type="number" id="duration-seconds" value="60" min="1" required></div>
-                </div>
-
-                <!-- 共通の予約設定 -->
-                <div class="input-group"><label for="repeat-type">繰り返し</label>
-                    <select id="repeat-type">
-                        <option value="once" selected>一回のみ</option><option value="daily">毎日</option><option value="weekly">曜日指定</option>
-                    </select>
-                </div>
-                <div class="input-group" id="date-group"><label for="schedule-date">日付</label><input type="date" id="schedule-date" required></div>
-                <div class="input-group"><label for="schedule-time">時刻</label><input type="time" id="schedule-time" required></div>
-                <div class="weekday-group hidden" id="weekday-group">
-                    <label><input type="checkbox" name="weekday" value="mon">月</label> <label><input type="checkbox" name="weekday" value="tue">火</label>
-                    <label><input type="checkbox" name="weekday" value="wed">水</label> <label><input type="checkbox" name="weekday" value="thu">木</label>
-                    <label><input type="checkbox" name="weekday" value="fri">金</label> <label><input type="checkbox" name="weekday" value="sat">土</label>
-                    <label><input type="checkbox" name="weekday" value="sun">日</label>
-                </div>
-                <button type="submit" class="btn btn-primary">この内容で予約</button>
-            </form>
-        </div>
-
-        <div class="card">
-            <h2 class="section-title">予約済みタスク</h2>
-            <ul id="job-list" class="list"><li class="list-item">予約済みのタスクはありません。</li></ul>
-        </div>
+  <header class="app-header">
+    <h1 class="app-title">Smart IR Remote</h1>
+    <div class="device-picker">
+      <label for="target-device">送信先</label>
+      <select id="target-device"></select>
     </div>
-    <div id="status-bar"></div>
+  </header>
 
-    <script>
-    document.addEventListener('DOMContentLoaded', () => {
-        const $ = (selector) => document.querySelector(selector);
-        const $$ = (selector) => document.querySelectorAll(selector);
+  <!-- 健全性バナー。/api/health の ok と last_job_error で描き分ける -->
+  <div id="banners" class="banners" aria-live="polite"></div>
 
-        const esp32IpInput = $('#esp32-ip');
-        const statusBar = $('#status-bar');
-        const receiveForm = $('#receive-form');
-        const scheduleForm = $('#schedule-form');
-        const signalList = $('#signal-list');
-        const jobList = $('#job-list');
-        
-        const scheduleType = $('#schedule-type');
-        const singleInputs = $('#single-schedule-inputs');
-        const wakeupInputs = $('#wakeup-schedule-inputs');
-        const signalSelect = $('#signal-select');
-        const onSignalSelect = $('#on-signal-select');
-        const offSignalSelect = $('#off-signal-select');
-        const repeatType = $('#repeat-type');
-        const dateGroup = $('#date-group');
-        const weekdayGroup = $('#weekday-group');
+  <nav class="tabs" role="tablist" aria-label="画面">
+    <button type="button" class="tab" role="tab" data-tab="remote" id="tab-remote">リモコン</button>
+    <button type="button" class="tab" role="tab" data-tab="learn" id="tab-learn">学習</button>
+    <button type="button" class="tab" role="tab" data-tab="schedules" id="tab-schedules">予約</button>
+    <button type="button" class="tab" role="tab" data-tab="settings" id="tab-settings">設定</button>
+  </nav>
 
-        const API = {
-            async request(method, endpoint, body = null) {
-                const opts = { method, headers: { 'Content-Type': 'application/json' } };
-                if (body) opts.body = JSON.stringify(body);
-                // MODIFIED: 先頭の / を削除
-                const res = await fetch(endpoint, opts);
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({ detail: res.statusText }));
-                    throw new Error(err.detail);
-                }
-                // Handle empty responses
-                const text = await res.text();
-                return text ? JSON.parse(text) : {};
-            },
-            // MODIFIED: すべてのAPI呼び出しパスから先頭の / を削除
-            get: (e) => API.request('GET', e),
-            post: (e, b) => API.request('POST', e, b),
-            put: (e, b) => API.request('PUT', e, b),
-            delete: (e) => API.request('DELETE', e),
-        };
+  <main class="content">
 
-        const getEsp32Ip = () => {
-            const ip = esp32IpInput.value.trim();
-            if (!ip) { showStatus('ESP32のIPアドレスを入力してください。', 'error'); return null; }
-            return ip;
-        };
+    <!-- ================= リモコン ================= -->
+    <section class="panel" id="panel-remote" role="tabpanel" aria-labelledby="tab-remote">
+      <div class="card">
+        <h2>登録済みの信号</h2>
+        <p class="hint" id="remote-lock-note" hidden>学習中は送信できません（機器が受信モードのため）。</p>
+        <ul class="list" id="signal-list"></ul>
+      </div>
+    </section>
 
-        const showStatus = (message, type, duration = 4000) => {
-            clearTimeout(window.statusTimeout);
-            statusBar.textContent = message;
-            statusBar.className = `${type} visible`;
-            window.statusTimeout = setTimeout(() => statusBar.classList.remove('visible'), duration);
-        };
+    <!-- ================= 学習 ================= -->
+    <section class="panel" id="panel-learn" role="tabpanel" aria-labelledby="tab-learn" hidden>
+      <div class="card">
+        <h2>信号の学習</h2>
+        <form id="learn-form" novalidate>
+          <div class="field">
+            <label for="learn-name">新しい信号の名前</label>
+            <input type="text" id="learn-name" placeholder="例: living_light_on" autocomplete="off">
+          </div>
+          <label class="check">
+            <input type="checkbox" id="learn-overwrite">
+            <span>同名の信号があれば上書きする</span>
+          </label>
+          <button type="submit" class="btn btn-primary" id="learn-submit">学習を開始</button>
+        </form>
+        <div class="learn-status" id="learn-status" hidden></div>
+      </div>
+    </section>
 
-        const refreshAll = async () => {
-            await Promise.all([refreshSignalList(), refreshScheduledJobs()]);
-        };
+    <!-- ================= 予約 ================= -->
+    <section class="panel" id="panel-schedules" role="tabpanel" aria-labelledby="tab-schedules" hidden>
 
-        const refreshSignalList = async () => {
-            try {
-                // MODIFIED: 先頭の / を削除
-                const signals = await API.get('api/signals');
-                const createOption = (s) => `<option value="${s.name}">${s.name}</option>`;
-                signalSelect.innerHTML = onSignalSelect.innerHTML = offSignalSelect.innerHTML = `
-                    <option value="" disabled selected>-- 信号を選択 --</option>
-                    ${signals.map(createOption).join('')}`;
+      <!-- 鳴っている目覚まし。旧実装には止める手段が無かった（不具合 G） -->
+      <div class="card card-alarm" id="alarm-card" hidden>
+        <h2>鳴っている目覚まし</h2>
+        <ul class="list" id="alarm-list"></ul>
+      </div>
 
-                signalList.innerHTML = signals.length ? signals.map(s => `
-                    <li class="list-item">
-                        <span class="item-name">${s.name}</span>
-                        <div class="button-group">
-                            <button class="btn btn-primary btn-inline btn-send" data-name="${s.name}">送信</button>
-                            <button class="btn btn-info btn-inline btn-rename" data-name="${s.name}">リネーム</button>
-                            <button class="btn btn-danger btn-inline btn-delete" data-name="${s.name}">削除</button>
-                        </div>
-                    </li>`).join('') : '<li class="list-item">登録済みの信号がありません。</li>';
-            } catch (error) { showStatus(`信号リスト読込エラー: ${error.message}`, 'error'); }
-        };
+      <div class="card">
+        <h2>新しい予約</h2>
+        <form id="schedule-form" novalidate>
+          <div class="field">
+            <label for="schedule-kind">予約の種類</label>
+            <select id="schedule-kind">
+              <option value="signal" selected>単発送信</option>
+              <option value="wakeup">目覚まし</option>
+            </select>
+          </div>
 
-        const refreshScheduledJobs = async () => {
-            try {
-                // MODIFIED: 先頭の / を削除
-                const jobs = await API.get('api/schedules');
-                jobList.innerHTML = jobs.length ? jobs.map(j => {
-                    const nextRun = j.next_run ? new Date(j.next_run).toLocaleString('ja-JP') : '終了';
-                    return `<li class="list-item">
-                        <div class="item-details">
-                            <strong>${j.name}</strong>
-                            <span>${j.schedule_description}</span>
-                            <span>次回: ${nextRun}</span>
-                        </div>
-                        <button class="btn btn-danger btn-inline btn-delete-job" data-id="${j.id}">削除</button>
-                    </li>`;
-                }).join('') : '<li class="list-item">予約済みのタスクはありません。</li>';
-            } catch (error) { showStatus(`予約リスト読込エラー: ${error.message}`, 'error'); }
-        };
+          <fieldset class="fs" id="fs-signal">
+            <div class="field">
+              <label for="signal-select">信号</label>
+              <select id="signal-select"></select>
+            </div>
+          </fieldset>
 
-        signalList.addEventListener('click', async (e) => {
-            const name = e.target.dataset.name;
-            if (!name) return;
-            try {
-                if (e.target.matches('.btn-send')) {
-                    const esp32Ip = getEsp32Ip(); if (!esp32Ip) return;
-                    // MODIFIED: 先頭の / を削除
-                    await API.post(`api/send/${name}`, { esp32_ip: esp32Ip });
-                    showStatus(`「${name}」を送信しました。`, 'success');
-                } else if (e.target.matches('.btn-rename')) {
-                    const newName = prompt(`「${name}」の新しい名前:`, name);
-                    if (newName && newName.trim() && newName !== name) {
-                        // MODIFIED: 先頭の / を削除
-                        await API.put(`api/signals/${name}`, { name: newName.trim() });
-                        showStatus(`「${name}」を「${newName}」に変更しました。`, 'success');
-                        refreshAll();
-                    }
-                } else if (e.target.matches('.btn-delete')) {
-                    if (confirm(`「${name}」を本当に削除しますか？`)) {
-                        // MODIFIED: 先頭の / を削除
-                        await API.delete(`api/signals/${name}`);
-                        showStatus(`「${name}」を削除しました。`, 'success');
-                        refreshAll();
-                    }
-                }
-            } catch (error) { showStatus(`操作エラー: ${error.message}`, 'error'); }
-        });
+          <fieldset class="fs" id="fs-wakeup" disabled hidden>
+            <div class="field">
+              <label for="on-signal-select">ON 信号</label>
+              <select id="on-signal-select"></select>
+            </div>
+            <div class="field">
+              <label for="off-signal-select">OFF 信号</label>
+              <select id="off-signal-select"></select>
+            </div>
+            <div class="field">
+              <label for="interval-seconds">間隔（秒）</label>
+              <input type="number" id="interval-seconds" value="1.5" min="0.1" max="60" step="0.1">
+            </div>
+            <div class="field">
+              <label for="duration-seconds">継続時間（秒）</label>
+              <input type="number" id="duration-seconds" value="60" min="1">
+              <p class="hint">最大 1800 秒（30 分）。超えるとサーバが理由付きで断ります。</p>
+            </div>
+          </fieldset>
 
-        jobList.addEventListener('click', async (e) => {
-            if (!e.target.matches('.btn-delete-job')) return;
-            const jobId = e.target.dataset.id;
-            if (confirm(`この予約タスクを本当に削除しますか？`)) {
-                try {
-                    // MODIFIED: 先頭の / を削除
-                    await API.delete(`api/schedules/${jobId}`);
-                    showStatus('予約を削除しました。', 'success');
-                    refreshScheduledJobs();
-                } catch (error) { showStatus(`予約削除エラー: ${error.message}`, 'error'); }
-            }
-        });
-        
-        receiveForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const esp32Ip = getEsp32Ip();
-            const newSignalNameInput = $('#new-signal-name');
-            const name = newSignalNameInput.value.trim();
-            if (!esp32Ip || !name) return;
-            try {
-                // MODIFIED: 先頭の / を削除
-                await API.post('api/receive', { name, esp32_ip: esp32Ip });
-                showStatus('ESP32に向けてリモコンのボタンを15秒以内に押してください...', 'info', 15000);
-                newSignalNameInput.value = '';
-                setTimeout(refreshAll, 16000);
-            } catch (error) { showStatus(`学習開始エラー: ${error.message}`, 'error'); }
-        });
-        
-        scheduleForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const esp32Ip = getEsp32Ip(); if (!esp32Ip) return;
+          <div class="field">
+            <label for="repeat-type">繰り返し</label>
+            <select id="repeat-type">
+              <option value="once" selected>一回のみ</option>
+              <option value="daily">毎日</option>
+              <option value="weekly">曜日指定</option>
+            </select>
+          </div>
 
-            const commonPayload = {
-                esp32_ip: esp32Ip,
-                repeat_type: repeatType.value,
-                execute_time: $('#schedule-time').value,
-            };
-            if (commonPayload.repeat_type === 'once') commonPayload.execute_date = $('#schedule-date').value;
-            if (commonPayload.repeat_type === 'weekly') commonPayload.repeat_days = Array.from($$('#weekday-group input:checked')).map(cb => cb.value);
+          <fieldset class="fs" id="fs-date">
+            <div class="field">
+              <label for="schedule-date">日付</label>
+              <input type="date" id="schedule-date">
+            </div>
+          </fieldset>
 
-            try {
-                if (scheduleType.value === 'single') {
-                    const payload = { ...commonPayload, name: signalSelect.value };
-                    if (!payload.name) { showStatus('信号を選択してください。', 'error'); return; }
-                    // MODIFIED: 先頭の / を削除
-                    await API.post('api/schedule', payload);
-                } else {
-                    const interval = parseFloat($('#interval-seconds').value);
-                    const duration = parseInt($('#duration-seconds').value, 10);
-                    
-                    if (isNaN(interval) || interval <= 0) {
-                        showStatus('間隔は0より大きい数値を入力してください。', 'error'); return;
-                    }
-                    if (isNaN(duration) || duration <= 0) {
-                        showStatus('持続時間は0より大きい整数を入力してください。', 'error'); return;
-                    }
-                    
-                    const payload = {
-                        ...commonPayload,
-                        on_signal_name: onSignalSelect.value,
-                        off_signal_name: offSignalSelect.value,
-                        interval_seconds: interval,
-                        duration_seconds: duration,
-                    };
-                    if (!payload.on_signal_name || !payload.off_signal_name) { showStatus('ON/OFF両方の信号を選択してください。', 'error'); return; }
-                    // MODIFIED: 先頭の / を削除
-                    await API.post('api/schedule/wakeup', payload);
-                }
-                showStatus('予約を登録しました。', 'success');
-                refreshScheduledJobs();
-            } catch (error) {
-                console.error("予約エラー:", error);
-                showStatus(`予約エラー: ${error.message}`, 'error');
-            }
-        });
+          <div class="field">
+            <label for="schedule-time">時刻</label>
+            <input type="time" id="schedule-time">
+          </div>
 
-        const toggleScheduleInputs = () => {
-            const isSingle = scheduleType.value === 'single';
-            singleInputs.classList.toggle('hidden', !isSingle);
-            wakeupInputs.classList.toggle('hidden', isSingle);
-        };
-        const toggleRepeatInputs = () => {
-            dateGroup.classList.toggle('hidden', repeatType.value !== 'once');
-            weekdayGroup.classList.toggle('hidden', repeatType.value !== 'weekly');
-        };
+          <fieldset class="fs" id="fs-weekday" disabled hidden>
+            <legend>曜日</legend>
+            <div class="weekdays" id="weekday-group">
+              <label><input type="checkbox" name="weekday" value="mon"><span>月</span></label>
+              <label><input type="checkbox" name="weekday" value="tue"><span>火</span></label>
+              <label><input type="checkbox" name="weekday" value="wed"><span>水</span></label>
+              <label><input type="checkbox" name="weekday" value="thu"><span>木</span></label>
+              <label><input type="checkbox" name="weekday" value="fri"><span>金</span></label>
+              <label><input type="checkbox" name="weekday" value="sat"><span>土</span></label>
+              <label><input type="checkbox" name="weekday" value="sun"><span>日</span></label>
+            </div>
+          </fieldset>
 
-        scheduleType.addEventListener('change', toggleScheduleInputs);
-        repeatType.addEventListener('change', toggleRepeatInputs);
+          <button type="submit" class="btn btn-primary" id="schedule-submit">この内容で予約</button>
+        </form>
+      </div>
 
-        const now = new Date();
-        $('#schedule-date').value = now.toISOString().split('T')[0];
-        $('#schedule-time').value = now.toTimeString().substring(0, 5);
-        toggleScheduleInputs();
-        toggleRepeatInputs();
-        refreshAll();
-    });
-    </script>
+      <div class="card">
+        <h2>予約済み</h2>
+        <ul class="list" id="job-list"></ul>
+      </div>
+    </section>
+
+    <!-- ================= 設定 ================= -->
+    <section class="panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <div class="card">
+        <h2>機器</h2>
+        <ul class="list" id="device-list"></ul>
+        <button type="button" class="btn btn-secondary" id="device-add">機器を追加</button>
+
+        <form id="device-form" novalidate hidden>
+          <h3 id="device-form-title">機器を追加</h3>
+          <div class="field">
+            <label for="device-name">名前</label>
+            <input type="text" id="device-name" placeholder="例: esp32" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="device-host">ホスト（IP またはホスト名）</label>
+            <input type="text" id="device-host" placeholder="例: 192.168.1.50" autocomplete="off">
+            <p class="hint">http:// と末尾の / は自動で取り除かれます。ポート指定は残ります。</p>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="device-default">
+            <span>この機器を既定にする</span>
+          </label>
+          <div class="row">
+            <button type="submit" class="btn btn-primary" id="device-save">保存</button>
+            <button type="button" class="btn btn-secondary" id="device-cancel">やめる</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>サーバの状態</h2>
+        <dl class="info" id="server-info"></dl>
+        <p class="hint">
+          「学習コールバック」は ESP32 がサーバへ結果を返すときに使うアドレスです。
+          ESP32 と同じ LAN 側の IP になっている必要があります
+          （Tailscale の IP だと ESP から届きません）。
+        </p>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
-
-

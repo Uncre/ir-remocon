@@ -13,6 +13,8 @@ from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import config
+
 #: 繰り返し種別
 RepeatType = Literal["once", "daily", "weekly"]
 
@@ -205,6 +207,26 @@ class WakeupScheduleRequest(ScheduleBase):
     interval_seconds: Annotated[float, Field(gt=0, le=60)]
     duration_seconds: Annotated[int, Field(gt=0)]
 
+    @field_validator("duration_seconds")
+    @classmethod
+    def _limit_duration(cls, v: int) -> int:
+        """継続時間の上限を検証する。
+
+        アラームは実行中スケジューラのワーカースレッドを 1 本占有し続けるため、
+        無制限だと他の予約を取りこぼす (不具合 G)。**黙って切り詰めず 422 で断る**
+        — 「30 分で止まる」ことをユーザが知らないまま 3 時間の目覚ましを
+        設定できてしまう方が悪い。
+
+        ``Field(le=...)`` ではなく validator にしているのは、上限が定数ではなく
+        設定値 (``IR_MAX_ALARM_DURATION``) だから。クラス定義時ではなく
+        検証時に読むので、テストからも監視できる。
+        """
+        if v > config.MAX_ALARM_DURATION_SEC:
+            raise ValueError(
+                f"継続時間の上限は {config.MAX_ALARM_DURATION_SEC} 秒です (指定: {v} 秒)"
+            )
+        return v
+
 
 class JobOut(BaseModel):
     id: str
@@ -232,6 +254,8 @@ class RunningAlarmOut(BaseModel):
     off_signal: str
     started_at: datetime
     ends_at: datetime
+    #: 発火元の予約 id。手動起動などで不明な場合は None。
+    job_id: Optional[str] = None
 
 
 # -----------------------------------------------------------------------------
@@ -250,6 +274,13 @@ class LearnSessionOut(BaseModel):
     message: Optional[str] = None
     timeout_seconds: int
     expires_at: datetime
+    device_id: Optional[int] = None
+    device_name: Optional[str] = None
+    #: 受信できた raw データの要素数 (成功時のみ)。
+    #: 画面に出すのは Phase 6 の切り分けのため — ESP 側の受信バッファは
+    #: ``StaticJsonDocument<2048>`` で最大 1024 要素しか収容できず、
+    #: 溢れると**黙って切り詰める**疑いがある。要素数が見えれば気づける。
+    raw_length: Optional[int] = None
 
 
 class IRSignalCallback(BaseModel):
@@ -272,9 +303,21 @@ class HealthOut(BaseModel):
     """
 
     ok: bool
+    #: ``scheduler.running`` だけでなく **ハートビートの鮮度** も見た結果。
+    #: 状態フラグは、メインループのスレッドが例外で死んでも True のままになる。
     scheduler_running: bool
+    #: ir_database.db と jobs.db の両方に読み書きできるか。
     db_ok: bool
     job_count: int
     running_alarms: int
     last_job_error: Optional[str] = None
     advertise_host: str
+    #: ESP32 に実際に渡している学習コールバックの URL ベース。
+    #: 設定タブに出す。ここが LAN 側の IP になっていないと学習は必ず失敗するが、
+    #: 旧実装では画面のどこにも出ていなかったのでユーザに切り分けようが無かった。
+    callback_base_url: str = ""
+    #: 機器が 0 台になると送信も予約も全滅するので、設定ミスの自己診断用に出す。
+    device_count: int = 0
+    default_device_name: Optional[str] = None
+    #: 最後にスケジューラの内部ジョブが発火した時刻。
+    last_heartbeat: Optional[datetime] = None

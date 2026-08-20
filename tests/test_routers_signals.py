@@ -63,12 +63,5 @@ def test_empty_raw_data_is_422(client):
     assert client.post("/api/signals", json={"name": "a", "raw_data": []}).status_code == 422
 
 
-def test_root_does_not_serve_legacy_ui(client):
-    """旧 index.html は配信しない (esp32_ip 前提なので操作できない)。
-
-    フェーズ番号ではなく「HTML を返していないこと」を見る。番号を assert すると
-    フェーズが進むたびにこのテストを書き換えることになり、何も守らなくなる。
-    """
-    response = client.get("/")
-    assert response.status_code == 200
-    assert "text/html" not in response.headers["content-type"]
+# ``/`` の配信は Phase 5 で UI 実装に切り替わった。
+# 内容の検証は tests/test_frontend_assets.py に移動している。

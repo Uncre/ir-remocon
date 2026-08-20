@@ -1,0 +1,440 @@
+/*
+ * Smart IR Remote — スタイル。
+ *
+ * 前提: スマホ（Tailscale 経由で外出先から）とデスクトップの両方から日常的に開く。
+ * どちらも同等に使えることを狙う。
+ *   - モバイル (<=640px): タブを画面下端に固定。親指の届く位置に置く
+ *   - デスクトップ:       タブを上部に固定し、本文は中央寄せで最大幅を制限
+ * 配色は OS のライト/ダーク設定に追従する（prefers-color-scheme）。
+ * ビルド工程は無い。素の CSS のまま読める状態を保つこと。
+ */
+
+:root {
+  --bg: #f4f7f9;
+  --surface: #ffffff;
+  --surface-alt: #f0f3f6;
+  --text: #1c2430;
+  --text-muted: #5d6b7a;
+  --border: #dfe5ec;
+
+  --primary: #0a68d0;
+  --primary-text: #ffffff;
+  --danger: #c62828;
+  --success: #1f7a3d;
+  --warn: #a35a00;
+  --warn-bg: #fff6e5;
+  --danger-bg: #fdecec;
+  --info: #0f6d80;
+
+  --radius: 10px;
+  --gap: 16px;
+  --tap: 44px; /* タップ対象の最小寸法 */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
+          "Noto Sans JP", Meiryo, Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181d;
+    --surface: #1e242b;
+    --surface-alt: #262e37;
+    --text: #e6ebf1;
+    --text-muted: #9dabba;
+    --border: #333d48;
+
+    --primary: #4c9bf5;
+    --primary-text: #08121d;
+    --danger: #ef8b8b;
+    --success: #74d69a;
+    --warn: #f0b45e;
+    --warn-bg: #3a2e18;
+    --danger-bg: #3a1f1f;
+    --info: #63c6d8;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  /* 横スクロールを構造的に禁止する。長い信号名やホスト名でレイアウトが
+     はみ出す事故を防ぐ（狭い画面での最頻出の崩れ） */
+  overflow-x: hidden;
+}
+
+/* --------------------------------------------------------------- ヘッダ */
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-top));
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-title {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--primary);
+}
+
+.device-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.device-picker label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.device-picker select { min-width: 10rem; }
+
+/* --------------------------------------------------------------- バナー */
+.banners:empty { display: none; }
+.banners { padding: 12px 16px 0; }
+
+.banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  margin-bottom: 10px;
+  font-size: 0.92rem;
+}
+
+/* 赤 = 機構が動いていない（予約が発火しない状態） */
+.banner-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* 黄 = 機構は動いているが直近のジョブが失敗した。赤と同一視しないこと */
+.banner-warn {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.banner strong { display: block; }
+.banner-body { min-width: 0; overflow-wrap: anywhere; }
+
+/* --------------------------------------------------------------- タブ */
+.tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.tab {
+  flex: 1 1 0;
+  min-height: var(--tap);
+  padding: 10px 4px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 700;
+}
+
+/* --------------------------------------------------------------- 本文 */
+.content {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: var(--gap) var(--gap) calc(var(--gap) * 3);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--primary);
+}
+
+.card h3 { margin: 0 0 12px; font-size: 1rem; }
+
+.card-alarm { border-color: var(--warn); }
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------- 入力 */
+.field { margin-bottom: 14px; }
+
+label { display: block; margin-bottom: 4px; font-weight: 600; font-size: 0.9rem; }
+
+input[type="text"], input[type="number"], input[type="date"],
+input[type="time"], select {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* fieldset は「非表示モードの入力を検証から外す」ためだけに使う。
+   見た目は素の div と同じにする */
+.fs { border: none; margin: 0; padding: 0; min-width: 0; }
+.fs legend { padding: 0; font-weight: 600; font-size: 0.9rem; }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-weight: 400;
+}
+
+.check input { width: 20px; height: 20px; margin: 0; }
+
+.weekdays { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+.weekdays label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 6px 10px;
+  min-height: var(--tap);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.weekdays input { width: 18px; height: 18px; margin: 0; }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* --------------------------------------------------------------- ボタン */
+.btn {
+  min-height: var(--tap);
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary { background: var(--primary); color: var(--primary-text); width: 100%; }
+.btn-secondary { background: var(--surface-alt); border-color: var(--border); }
+.btn-danger { color: var(--danger); border-color: var(--danger); background: none; }
+.btn-small { min-height: 36px; padding: 4px 12px; font-size: 0.85rem; }
+
+.row .btn-primary { width: auto; flex: 1 1 auto; }
+
+/* 送信中のスピナー。多重送信ガードで disabled になっている間だけ出る */
+.btn.is-busy { position: relative; color: transparent; }
+.btn.is-busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  color: var(--primary-text);
+  animation: spin 0.7s linear infinite;
+}
+.btn-secondary.is-busy::after, .btn-danger.is-busy::after { color: var(--text); }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn.is-busy::after { animation-duration: 2s; }
+}
+
+/* --------------------------------------------------------------- 一覧 */
+.list { list-style: none; margin: 0; padding: 0; }
+
+.list-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.list-item:last-child { border-bottom: none; }
+
+.item-main { min-width: 0; flex: 1 1 12rem; }
+
+.item-title { font-weight: 600; overflow-wrap: anywhere; }
+
+.item-sub {
+  display: block;
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* 削除済み機器を指している予約。放置すると発火時に必ず失敗する */
+.item-sub.is-danger { color: var(--danger); font-weight: 600; }
+
+.item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.empty { color: var(--text-muted); padding: 12px 0; }
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.badge-default { color: var(--primary); border-color: var(--primary); }
+.badge-ok { color: var(--success); border-color: var(--success); }
+.badge-ng { color: var(--danger); border-color: var(--danger); }
+
+/* --------------------------------------------------------------- 学習 */
+.learn-status {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+.learn-status.is-pending { border-color: var(--info); }
+.learn-status.is-success { border-color: var(--success); }
+.learn-status.is-timeout { border-color: var(--warn); }
+.learn-status.is-error { border-color: var(--danger); }
+
+.learn-headline { font-weight: 700; margin: 0 0 4px; }
+.learn-countdown { font-size: 1.6rem; font-weight: 700; color: var(--info); }
+
+.progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress-bar { height: 100%; background: var(--info); transition: width 0.4s linear; }
+
+/* --------------------------------------------------------------- 情報表 */
+.info { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
+.info dt { color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; }
+.info dd { margin: 0; overflow-wrap: anywhere; font-size: 0.9rem; }
+
+/* --------------------------------------------------------------- トースト */
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(480px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border-left: 4px solid;
+  background: var(--surface);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+
+.toast-success { border-color: var(--success); }
+.toast-error { border-color: var(--danger); }
+/* warn は「失敗」ではない状態に使う。409 ビジー / 504 結果不明 など */
+.toast-warn { border-color: var(--warn); }
+.toast-info { border-color: var(--info); }
+
+.toast-title { font-weight: 700; }
+
+/* --------------------------------------------------------------- モバイル */
+@media (max-width: 640px) {
+  .app-header { padding-bottom: 8px; }
+  .app-title { font-size: 1rem; }
+  .device-picker { flex: 1 1 100%; }
+  .device-picker select { flex: 1 1 auto; min-width: 0; }
+
+  /* タブを下端へ。片手で届く位置に置く */
+  .tabs {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.12);
+  }
+
+  .tab { border-bottom: none; border-top: 3px solid transparent; }
+  .tab[aria-selected="true"] { border-bottom-color: transparent; border-top-color: var(--primary); }
+
+  .content { padding-bottom: calc(var(--tap) + 40px + env(safe-area-inset-bottom)); }
+  .toasts { bottom: calc(var(--tap) + 24px + env(safe-area-inset-bottom)); }
+
+  /* 狭い画面では操作ボタンを行いっぱいに広げて押しやすくする */
+  .item-actions { flex: 1 1 100%; }
+  .item-actions .btn { flex: 1 1 auto; }
+}

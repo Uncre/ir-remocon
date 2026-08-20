@@ -16,10 +16,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from ir_remocon.app import config, db, esp32
+from ir_remocon.app import config, db, esp32, jobs, learn, scheduler
 
 #: 触ってはいけない本番 DB
 PRODUCTION_DB = config.BASE_DIR / "ir_database.db"
+PRODUCTION_JOBS_DB = config.BASE_DIR / "jobs.db"
 
 
 @pytest.fixture(autouse=True)
@@ -28,10 +29,45 @@ def _guard_production_db(monkeypatch, tmp_path):
 
     個別のテストが ``temp_db`` を取り忘れても本番 DB に書き込まないようにする
     安全網 (AGENTS.md の絶対ルール 3「DB を触る前にバックアップ」の自動化)。
+
+    ``jobs.db`` も同様に守る。こちらは APScheduler が **復元できないジョブを
+    黙って削除する** ので、テストがうっかり本番を掴むと予約が消える。
     """
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "guard.db")
+    monkeypatch.setattr(config, "JOBS_DB_PATH", tmp_path / "guard_jobs.db")
+    # ログも本番の出力先から離す。TestClient は lifespan 経由で setup_logging() を
+    # 呼ぶので、そのままだとテストの実行記録が ir_db_server.log に混ざる。
+    # あのログは不具合 D のような事象を後から追うための証拠なので、汚さない。
+    monkeypatch.setattr(config, "LOG_PATH", tmp_path / "guard.log")
     yield
     assert config.DB_PATH != PRODUCTION_DB, "テストが本番 DB を指しています"
+    assert config.JOBS_DB_PATH != PRODUCTION_JOBS_DB, "テストが本番 jobs.db を指しています"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_scheduler():
+    """スケジューラ singleton と実行中アラームをテストごとにリセットする。
+
+    後始末を怠るとスレッドとアラームがテスト間で漏れ、無関係なテストが
+    実時間で待たされる (あるいはスイート終了時に固まる)。
+    """
+    scheduler.reset_scheduler()
+    jobs.stop_all_alarms()
+    yield
+    jobs.stop_all_alarms()
+    scheduler.reset_scheduler()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_learn():
+    """学習セッションの登録簿をテストごとにリセットする。
+
+    残したままだと「同じ機器で学習中」の 409 が無関係なテストに漏れる
+    (登録簿は機器 id で排他するので、前のテストの pending が効いてしまう)。
+    """
+    learn.reset()
+    yield
+    learn.reset()
 
 
 @pytest.fixture(autouse=True)

@@ -27,13 +27,14 @@ from typing import AsyncIterator
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, esp32, repository
+from . import config, esp32, learn, repository, scheduler
 from .db import init_db
 from .logging_conf import setup_logging
-from .routers import devices, send, signals
+from .routers import devices, health, schedules, send, signals
+from .routers import learn as learn_router
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config.DB_PATH, config.ADVERTISE_HOST, config.PORT,
     )
     init_db()
+    scheduler.start_scheduler()
     try:
         yield
     finally:
+        # スケジューラを先に止める。shutdown_scheduler() が実行中の目覚ましに
+        # 停止を通知してからジョブの終了を待つので、ここで ESP32 クライアントを
+        # 先に閉じると「終了処理中の送信」が握れなくなる。
+        scheduler.shutdown_scheduler()
         esp32.close_client()
         logger.info("終了しました")
 
@@ -114,36 +120,73 @@ def create_app() -> FastAPI:
             content={"detail": exc.message, "error": type(exc).__name__},
         )
 
+    @app.exception_handler(scheduler.SchedulerError)
+    def _handle_scheduler_error(
+        request: Request, exc: scheduler.SchedulerError
+    ) -> JSONResponse:
+        if exc.http_status >= 500:
+            logger.error("スケジューラエラー [%s] %s", type(exc).__name__, exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": exc.message, "error": type(exc).__name__},
+        )
+
+    @app.exception_handler(learn.LearnError)
+    def _handle_learn_error(request: Request, exc: learn.LearnError) -> JSONResponse:
+        if exc.http_status >= 500:
+            logger.error("学習エラー [%s] %s", type(exc).__name__, exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": exc.message, "error": type(exc).__name__},
+        )
+
     app.include_router(signals.router)
     app.include_router(send.router)
     app.include_router(devices.router)
+    app.include_router(schedules.router)
+    app.include_router(health.router)
+    app.include_router(learn_router.router)
 
-    # static/ は Phase 5 で作る。存在しないディレクトリを StaticFiles に渡すと
-    # マウント時点で RuntimeError になりサーバが起動しないので、ガードする。
-    # check_dir=False で黙らせる手もあるが、それだと設定ミスが永遠に静かな 404 になる。
+    # 存在しないディレクトリを StaticFiles に渡すとマウント時点で RuntimeError に
+    # なりサーバが起動しない。check_dir=False で黙らせる手もあるが、それだと
+    # 設定ミスが永遠に静かな 404 になる。
     if config.STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
     else:
-        logger.info(
-            "static ディレクトリが無いためマウントを省略しました: %s (Phase 5 で作成)",
+        logger.error(
+            "static ディレクトリが見つかりません: %s (UI は表示できません)",
             config.STATIC_DIR,
         )
 
     @app.get("/", include_in_schema=False)
-    def index() -> dict:
-        """暫定のトップページ。
+    def index() -> FileResponse:
+        """UI を返す。
 
-        旧 ``templates/index.html`` はここでは配信しない。旧 UI は送信時に
-        ``esp32_ip`` を送るが、新 API は ``device_id`` 参照に変わっているため
-        操作できない。中途半端に配信すると「押しても効かない画面」を
-        自分で作ることになる。旧 UI を触りたいときは旧モノリス
-        ``ir_remocon/ir_db_server.py`` をそのまま起動すればよい (残置してある)。
+        **Jinja2 は使わない。** 旧実装は ``Jinja2Templates`` 経由で配信し、
+        テンプレート変数 ``signals`` を渡していたが、``index.html`` は
+        ``{{ }}`` を一度も使っておらず、毎リクエスト DB を引くだけの
+        死んだクエリだった。画面の中身は全部 ``static/js/`` が API から
+        取ってくるので、素のファイルを返せば機能的に等価。
+
+        ``Cache-Control: no-cache`` を付けるのは、JS/CSS への参照が
+        この HTML に書かれているため。ここが古いまま配信されると、更新した
+        ``app.js`` をブラウザが読みに行かない。``/static`` 側は
+        ``StaticFiles`` が ETag を付けるので、中身が変わらなければ 304 で済む。
         """
-        return {
-            "status": "ok",
-            "phase": 3,
-            "note": "UI は Phase 5 で実装します。API ドキュメント: /docs",
-        }
+        return FileResponse(
+            config.TEMPLATES_DIR / "index.html",
+            media_type="text/html; charset=utf-8",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    favicon_path = config.STATIC_DIR / "favicon.ico"
+    if favicon_path.is_file():
+        # ブラウザは /static/favicon.ico の指定とは別に /favicon.ico も取りに来る。
+        # 旧実装では templates/ に置かれたまま、どのルートからも配信されず
+        # 常に 404 になっていた。
+        @app.get("/favicon.ico", include_in_schema=False)
+        def favicon() -> FileResponse:
+            return FileResponse(favicon_path)
 
     return app
 

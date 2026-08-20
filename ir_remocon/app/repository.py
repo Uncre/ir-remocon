@@ -94,6 +94,20 @@ def get_signal_raw(name: str) -> list[int]:
     return _decode_raw(row["raw_data"], name)
 
 
+def signal_exists(name: str) -> bool:
+    """信号が登録済みか。
+
+    ``get_signal_raw()`` を呼んで ``NotFound`` を捕まえる形でも判定はできるが、
+    「存在しないこと」は例外的な事態ではない場面 (学習開始時の上書き確認) で
+    使うので、真偽値で答える口を用意する。SQL をリポジトリ層に閉じる意図もある。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM ir_signals WHERE name = ?", (name,)
+        ).fetchone()
+    return row is not None
+
+
 def _decode_raw(raw_json: str, name: str) -> list[int]:
     try:
         data = json.loads(raw_json)
