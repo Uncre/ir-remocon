@@ -61,7 +61,9 @@ async function sendSignal(name, button) {
     try {
       const result = await api.post(`/api/send/${seg(name)}`, deviceIdPayload());
       // どこへ送ったかまで出す。送信先の設定ミスにユーザが自力で気づけるように。
-      toastSuccess(`「${name}」を ${result.device_name}（${result.host}）へ送信しました。`);
+      // 「送信しました」と断定しないのは、ファーム v2.0.0 が 202 (キュー投入) を
+      // 即返す設計で、赤外線が実際に放射されたことまでは保証しないため。
+      toastSuccess(`「${name}」を ${result.device_name}（${result.host}）へ送信を指示しました。`);
     } catch (error) {
       toastError(error);
     }

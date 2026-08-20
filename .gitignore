@@ -18,3 +18,7 @@ __pycache__/
 # 移行ツールが作るバックアップ
 *.bak
 backup_before_refactor/
+
+# PlatformIO のビルド成果物 (ツールチェインは ~/.platformio 側にある)
+esp/**/.pio/
+esp/**/.vscode/

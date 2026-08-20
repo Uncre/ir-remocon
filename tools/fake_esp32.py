@@ -68,6 +68,11 @@ class Options:
     callback_delay: float = 3.0
     #: True にするとコールバックを一切送らない (学習失敗の切り分け用)
     callback_fail: bool = False
+    #: True にするとファーム v2.0.0 と同じ「キュー投入して即応答」になる。
+    #: /ir/send は send_duration を待たずに 202 を返し、送信は裏で完了する。
+    #: 既定を False のままにしてあるのは、既存の統合テストが「送信直後に
+    #: send_count が増えている」ことを前提にしているため。
+    async_send: bool = False
 
 
 @dataclass
@@ -81,6 +86,8 @@ class State:
     #: 同時に /ir/send ハンドラに入っている数。直列化の検証に使う。
     concurrent: int = 0
     max_concurrent: int = 0
+    #: 実ファームの pendingSend 相当。/status の queue_len に出る。
+    pending: int = 0
 
 
 def _should_fail(opts: Options) -> bool:
@@ -120,15 +127,16 @@ def build_app(opts: Options) -> FastAPI:
             mode = state.mode
             count = state.send_count
             ok = state.last_send_ok
+            pending = state.pending
         return {
             "status": "ok",
             "device_mode": mode,
             "wifi_ssid": "fake-ssid",
             "ip_address": opts.host,
-            # Phase 6 のファームが返す予定のフィールド (前方互換の確認用)
+            # ファーム v2.0.0 が返すフィールド
             "send_count": count,
             "last_send_ok": ok,
-            "queue_len": 0,
+            "queue_len": pending,
         }
 
     @app.post("/ir/send")
@@ -152,6 +160,31 @@ def build_app(opts: Options) -> FastAPI:
             state.concurrent += 1
             state.max_concurrent = max(state.max_concurrent, state.concurrent)
             concurrent_now = state.concurrent
+            if opts.async_send:
+                state.pending = 1
+                state.last_send_ok = False
+
+        if opts.async_send:
+            # ファーム v2.0.0 と同じ挙動: ハンドラは即 202 を返し、実際の送信は
+            # 別スレッド (実機では loop()) が終わらせる。
+            def _finish_send() -> None:
+                time.sleep(opts.send_duration)
+                with state.lock:
+                    state.concurrent -= 1
+                    state.send_count += 1
+                    state.last_send_ok = True
+                    state.pending = 0
+                    state.mode = "idle"
+                logger.info("送信完了 (非同期)。アイドルに戻りました")
+
+            logger.info(
+                "送信をキューに入れました (%d 要素, %.2f 秒後に完了)",
+                len(payload["data"]), opts.send_duration,
+            )
+            threading.Thread(target=_finish_send, daemon=True).start()
+            return JSONResponse(
+                {"status": "queued", "message": "Send queued."}, status_code=202
+            )
 
         try:
             logger.info(
@@ -281,7 +314,12 @@ def parse_args(argv: Optional[list[str]] = None) -> Options:
     )
     parser.add_argument(
         "--send-status", type=int, default=200,
-        help="/ir/send の成功ステータス。202 で Phase 6 のファームを模擬",
+        help="/ir/send の成功ステータス。202 でファーム v2.0.0 のステータスだけを模擬",
+    )
+    parser.add_argument(
+        "--async-send", action="store_true",
+        help="ファーム v2.0.0 と同じ「キュー投入して即 202」にする "
+             "(--send-status 202 と違い、送信完了を待たずに応答する)",
     )
     parser.add_argument(
         "--fail-mode", default="none",
@@ -314,14 +352,17 @@ def parse_args(argv: Optional[list[str]] = None) -> Options:
         reject_concurrent=not args.no_reject_concurrent,
         callback_delay=args.callback_delay,
         callback_fail=args.callback_fail,
+        async_send=args.async_send,
     )
 
 
 def main(argv: Optional[list[str]] = None) -> None:
     opts = parse_args(argv)
     logger.info(
-        "スタブを起動します http://%s:%d (send_duration=%.2fs, send_status=%d, fail_mode=%s)",
-        opts.host, opts.port, opts.send_duration, opts.send_status, opts.fail_mode,
+        "スタブを起動します http://%s:%d "
+        "(send_duration=%.2fs, send_status=%d, async_send=%s, fail_mode=%s)",
+        opts.host, opts.port, opts.send_duration, opts.send_status,
+        opts.async_send, opts.fail_mode,
     )
     uvicorn.run(build_app(opts), host=opts.host, port=opts.port, log_config=None)
 

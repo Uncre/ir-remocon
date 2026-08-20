@@ -155,9 +155,73 @@ def test_burst_is_serialized_and_all_succeed(monkeypatch):
 
 
 def test_firmware_202_is_accepted():
-    """Phase 6 のファーム (キュー投入後に即 202) を先取りで検証する。"""
+    """ファームが 202 (キュー投入) を返しても成功と判定すること。"""
     with _StubServer(send_duration=0.05, send_status=202) as stub:
         esp32.send_raw(stub.host, [1, 2, 3])   # 例外が出なければ成功
+
+
+def test_async_send_returns_before_ir_fires():
+    """ファーム v2.0.0 の本来の挙動: 赤外線の放射を待たずに 202 が返る。
+
+    ``--send-status 202`` はステータスだけを差し替えるが、こちらは
+    実ファーム同様「ハンドラは即応答し、送信は loop() が終わらせる」を再現する。
+    """
+    with _StubServer(send_duration=0.5, async_send=True) as stub:
+        started = time.monotonic()
+        esp32.send_raw(stub.host, [1, 2, 3])
+        elapsed = time.monotonic() - started
+
+        # 送信完了 (0.5s) を待っていない = ロックを保持し続けていない
+        assert elapsed < 0.3, f"202 なのに {elapsed:.2f}s ブロックした"
+
+        # まだ発射前。queue_len でそれが分かる
+        status = esp32.get_status(stub.host)
+        assert status["queue_len"] == 1
+        assert status["last_send_ok"] is False
+        assert status["send_count"] == 0
+
+        # 発射後は queue_len が戻り send_count が増える
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            status = esp32.get_status(stub.host)
+            if status["queue_len"] == 0:
+                break
+            time.sleep(0.05)
+        assert status["send_count"] == 1
+        assert status["last_send_ok"] is True
+
+
+def test_async_send_burst_all_succeed(monkeypatch):
+    """赤外線の放射が最小送信間隔より短ければ、連打は全部成功する。"""
+    monkeypatch.setattr(config, "ESP32_LOCK_TIMEOUT", 60.0)
+    monkeypatch.setattr(config, "MIN_SEND_INTERVAL", 0.1)
+
+    with _StubServer(send_duration=0.02, async_send=True) as stub:
+        for _ in range(10):
+            esp32.send_raw(stub.host, [1, 2, 3])   # 例外が出なければ成功
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if esp32.get_status(stub.host)["queue_len"] == 0:
+                break
+            time.sleep(0.05)
+        assert esp32.get_status(stub.host)["send_count"] == 10
+
+
+def test_async_send_device_busy_when_ir_outlasts_min_interval(monkeypatch):
+    """202 化の代償を明示的に固定しておく。
+
+    サーバ側のロックは 202 が返った時点で解放されるので、赤外線の放射が
+    ``MIN_SEND_INTERVAL`` より長引くと、次の送信は**機器側の 409** に当たる。
+    これは失敗ではなく「まだ前の信号を出している」という正直な応答で、
+    UI は 409 を「機器がビジーです」と描画する。
+    """
+    monkeypatch.setattr(config, "MIN_SEND_INTERVAL", 0.0)
+
+    with _StubServer(send_duration=1.0, async_send=True) as stub:
+        esp32.send_raw(stub.host, [1, 2, 3])
+        with pytest.raises(esp32.Esp32DeviceBusy):
+            esp32.send_raw(stub.host, [1, 2, 3])
 
 
 def test_stub_busy_maps_to_device_busy():
