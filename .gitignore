@@ -22,3 +22,6 @@ backup_before_refactor/
 # PlatformIO のビルド成果物 (ツールチェインは ~/.platformio 側にある)
 esp/**/.pio/
 esp/**/.vscode/
+
+# ファームの Wi-Fi 認証情報。secrets.h.example は追跡対象のまま残すこと
+esp/**/secrets.h
