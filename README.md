@@ -173,6 +173,17 @@ uv run pytest tests/test_frontend_assets.py -q
 
 firmware は `esp/ir_remocon/ir_remocon.ino` です。Wi-Fi 認証情報は追跡しません。
 
+### 回路の作成
+
+必要な部品や、赤外線の受信・送信用回路の組み方は次の記事を参考にしてください。
+
+- [ESP32で赤外線リモコンを作る方法（IRremote v4.x）](https://qiita.com/yhotta240/items/df0f2f92b5dff1d9410b)
+
+記事中のスケッチは IRremote v4.x を使用していますが、本プロジェクトの firmware は
+IRremoteESP8266 を使用しています。記事は回路・部品・配線の参考とし、書き込みには
+このリポジトリの `ir_remocon.ino` を使用してください。本プロジェクトの配線は、受信が
+GPIO13、送信が GPIO4 です。
+
 ```powershell
 Set-Location esp\ir_remocon
 Copy-Item secrets.h.example secrets.h
