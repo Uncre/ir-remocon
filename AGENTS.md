@@ -1,7 +1,7 @@
 # AGENTS.md — ir-remocon
 
 ESP32 + FastAPI による自宅用スマート赤外線リモコン。
-現在は段階的なリファクタリング中で、Phase 1〜6 は完了、Phase 7 は未着手。
+段階的なリファクタリング Phase 1〜7 は完了している。
 
 このファイルは Codex が自動読込するための、短く強制力のある作業規約である。
 長い経緯・検証結果・実機手順はここへ重複させず、次の文書を正本とする。
@@ -9,7 +9,7 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 - 文書の読み順と索引: `docs/refactoring/README.md`
 - 現在までの詳細な申し送り: `docs/refactoring/HANDOFF.md`
 - 全体計画: `docs/refactoring/plans/master-plan.md`
-- Phase 別計画: `docs/refactoring/plans/phase-2-plan.md` 〜 `phase-6-plan.md`
+- Phase 別計画: `docs/refactoring/plans/phase-2-plan.md` 〜 `phase-7-plan.md`
 
 ## 作業開始時の必須手順
 
@@ -17,7 +17,7 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 2. `docs/refactoring/README.md` を読む。
 3. `git status --short --branch` と `git branch -vv --all` で現在地を確認する。
 4. コード・DB・依存関係を変更する場合は `docs/refactoring/HANDOFF.md` の関連節を読む。
-5. Phase に関わる作業では、全体計画と該当 Phase の計画を読む。Phase 7 には個別計画がまだ無いので、着手前に現状を再調査して計画を合意する。
+5. Phase に関わる作業では、全体計画と該当 Phase の計画を読む。
 
 ユーザーの未コミット変更は勝手に破棄・上書き・コミットしない。別ブランチの統合、rebase、reset、削除も明示依頼なしに行わない。
 
@@ -35,7 +35,7 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 2026-09-02 に `ir-receive-debug` を `master` へ統合した。
 
 - 現在の作業ブランチ: `master`
-- 最新コミット: `5d2b4aa GPIOピン番号を修正`（受信回路の OUT に合わせて `IR_RECV_PIN` を GPIO13 に修正）
+- 最新コミット: `ca80296 ファームウェアから不要な実装を削除`（firmware v2.2.0）
 - 統合コミット: `b641e0b Merge branch 'ir-receive-debug'`
 - `528bfb6`: firmware v2.1.0 のノイズ除外・受信待受継続・`secrets.h.example`
 - `2641139`: `esp/**/secrets.h` を除外する `.gitignore`
@@ -46,11 +46,6 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 統合前の未コミット `.gitignore` は `pre-merge user .gitignore change` という名前で
 stash に保全してある。最終状態では `master` の限定的な除外規則を採用し、実ファイル
 `esp/ir_remocon/secrets.h` は追跡しない。
-
-未追跡の `esp/ir_remocon/test.ino` はユーザーファイルとして変更・コミットしない。
-`platformio.ini` の `src_dir = .` により通常の `pio run` ではこのファイルもコンパイル対象に
-なり、不足ライブラリ `IRremote.hpp` で失敗する。ファーム本体だけを検証するときは
-`test.ino` を安全に一時退避して必ず復元するか、先にユーザーへ扱いを確認する。
 
 Git の状態は変わり得るため、上記を盲信せず毎回コマンドで再確認すること。
 

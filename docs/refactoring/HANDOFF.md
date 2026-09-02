@@ -18,8 +18,8 @@ Phase の計画・実装・レビューを担当する場合は、この文書�
    依存の追加は `uv add <pkg>`、実行は `uv run ...`。`uv.lock` は必ずコミット対象。
 2. **フェーズの区切りで必ず手を止めて報告する。** 勝手に次フェーズへ進まない。
 3. **DB を触る作業の前にバックアップを取る。** 既存の学習済み信号は再取得に実機が要るため失うと痛い。
-4. ESP32 の実機は現在**稼働しておらず、開発環境も無い**。ファームの検証は不可。
-   実機作業（USB接続・書き込み・リモコン送受信）が必要なときは、手順を書いてユーザーに依頼する。
+4. ESP32 の実機検証はエージェントが代行できない。PlatformIO のコンパイル確認は可能だが、
+   USB 接続・書き込み・赤外線送受信が必要なときは手順を書いてユーザーに依頼する。
 
 ---
 
@@ -38,7 +38,7 @@ Phase の計画・実装・レビューを担当する場合は、この文書�
 | 6 | ESP32 ファーム（`esp/ir_remocon/ir_remocon.ino`）※書き込みは後日 | ✅ **完了・ビルド検証済み** (2026-08-20) |
 | 6 follow-up | 受信ノイズ除外・待受継続・秘密情報の分離（firmware v2.1.0） | ✅ **`master` 統合・ビルド検証済み、実機未検証** (2026-09-02) |
 | 6 cleanup | GPIO13 修正・不要だった最小長フィルタと reject 統計の撤去（firmware v2.2.0） | ✅ **実機 A/B・ビルド検証済み** (2026-09-02) |
-| 7 | 周辺整備（README / migrate_jobs / 追加テスト） | ⬜ 未着手 ← **次はここ** |
+| 7 | 周辺整備（README / migrate_jobs / 依存・旧スクリプト整理 / 追加テスト） | ✅ **完了・検証済み** (2026-09-02) |
 
 > `tools/fake_esp32.py`（ESP32 スタブ）は Phase 2 で作成済み。**以降の検証はこれを使う。**
 
@@ -307,7 +307,7 @@ JS のモジュール構成（`static/js/`）:
 - **ESP が報告する `freq` は保存しない。** `ir_signals` に列が無く、送信は常に
   `config.DEFAULT_FREQ_KHZ`。ただし**既定と違う値が来たら WARNING に残す** —
   黙って捨てると「学習はできたのに送信しても効かない」という切り分けの難しい
-  症状になる。列の追加は Phase 7 の判断。
+  症状になる。Phase 7 で再検討し、測定できない値を保存しても根拠にならないため見送った。
 - **不具合 A の対策は 3 段構え。** ①`required` を 1 つも書かない ②非表示の
   `<fieldset>` は `hidden` と `disabled` を**必ず一緒に**動かす（`dom.js` の
   `toggleFieldset()`）③`<form novalidate>` でブラウザの制約検証自体を止める。
@@ -510,7 +510,8 @@ stash に保全してある。これは全階層の `secrets.h` を無視する�
   到達不能で起動する。最終確認は必ずブラウザで `http://192.168.1.50/status` を開くこと。
 - **受信バッファが溢れたことをサーバに通知する経路が無い。** コールバックを送らないので
   UI 上は「タイムアウト」に見える。真因は設定タブの `last_recv_overflow` で判別する。
-  → エラーコールバックの新設は Phase 7 の課題（サーバの契約変更を伴う）。
+  Phase 7 で再検討したが、GPIO13 修正後は実機で正常化しており、実際の overflow 再発も
+  無いため、firmware・API・UI の契約追加は見送った。再発時に改めて判断する。
 
 #### 書き込み手順（ユーザーの物理作業。順番が重要）
 
@@ -525,7 +526,7 @@ stash に保全してある。これは全階層の `secrets.h` を無視する�
    `取得方法 : 静的 IP` と出れば成功。`DHCP` と出ていたら静的設定が効いていないので
    手順 1 の値を見直す。**MAC アドレスもここに出る**（ルーターで DHCP 予約したい場合に使う）。
 4. **疎通確認**: PC のブラウザで `http://192.168.1.50/status` を開く。JSON が返れば OK。
-   ここで `firmware_version: "2.0.0"` が見えることも確認する。
+   ここで `firmware_version: "2.2.0"` が見えることも確認する。
 5. **サーバの設定タブ**で機器の host を `192.168.1.50` に更新し、「接続テスト」を押す。
 6. **学習テスト**: 学習タブで名前を入れて開始 → ESP の受信モジュールに向けて
    実機リモコンのボタンを押す → 一覧に出れば OK。
@@ -538,15 +539,63 @@ stash に保全してある。これは全階層の `secrets.h` を無視する�
 > `IR_ADVERTISE_HOST=192.168.1.110` を本番機で明示するのを忘れないこと。
 > ここが Tailscale IP になると ESP32 から到達できず学習が必ず失敗する。
 
+### Phase 7 で完成したもの
+
+計画の全文: `docs/refactoring/plans/phase-7-plan.md`
+
+Phase 1〜6 で先行実装済みだった環境・スタブ・主要テストを再調査し、残っていた運用上の
+穴を閉じた。新しいアプリ機能や DB スキーマ、firmware の変更は含まない。
+
+| ファイル | 役割 |
+|---|---|
+| `README.md` | uv セットアップ、起動、全環境変数、DB バックアップ、スタブ検証、firmware v2.2.0、本番反映 |
+| `tools/migrate_jobs.py` | 旧 jobs DB の読み取り専用棚卸しと、明示確認付きの JSON / DB 退避・クリア |
+| `tests/test_migrate_jobs.py` | dry-run、pickle 破損時の保全、backup、clear、競合検知、確認フラグ、失敗時の非破壊性を検証する 9 件 |
+| `pyproject.toml` / `uv.lock` | 未使用の直接依存 `jinja2` を削除 |
+| `ir_remocon/ir_request_test.py` | 危険なトップレベル実機送信を行う旧スクリプトだったため削除 |
+
+`migrate_jobs.py` の安全性は次の順序で成立する。
+
+1. 既定は SQLite URI の `mode=ro` で棚卸しするだけで、元 DB を変更しない。
+2. 削除には `--apply` と `--confirm-server-stopped` の両方が必要。
+3. 適用時は、人が予約を再登録できる JSON と SQLite backup API による `.bak` を先に作る。
+4. バックアップと元 DB の全行 fingerprint が一致することを確認する。
+5. 排他 transaction 内でも fingerprint を再確認し、同じ場合だけジョブ行を削除する。
+6. pickle を decode できない行は処理を止めず、エラーと Base64 を JSON に残す。
+
+バックアップ済みの実データ `jobs.phase4-20260818-213446.db` に対する確認では、旧予約
+**7 件すべて**から関数名、cron、信号名、古い IP、目覚まし間隔・継続時間を復元できた。
+その DB の一時コピーに適用したところ、JSON と 28,672 bytes の DB backup を作成した後、
+コピー側だけが 0 件になった。バックアップ原本と本番 DB は変更していない。
+
+検証結果:
+
+- `uv lock --locked`: 成功
+- `jinja2` を含まない新規の一時 uv 環境へ `uv sync --frozen`: 成功（37 packages）
+- `uv run pytest -q`: **235 passed / 11 deselected**
+- `uv run pytest -m integration -v`: **11 passed / 235 deselected**
+- `uv run pytest tests/test_frontend_assets.py -q`: **27 passed**
+- 既知の `StarletteDeprecationWarning` が各 pytest 実行で 1 件。新規失敗ではない。
+
+Phase 7 の判断:
+
+- 受信 overflow 専用コールバックは見送った。GPIO13 修正後に実機で学習・再送信が成功し、
+  現在は `/status` の `last_recv_overflow` でも切り分けられる。実際の再発時に再検討する。
+- `freq` の DB 保存も見送った。IRremoteESP8266 は搬送波を測定できず、firmware の報告値は
+  38kHz 固定なので、保存しても測定事実にはならない。
+- 稼働中のローカル `ir-remocon.exe` が `.venv` をロックしていたため、その既存環境自体は
+  同期していない。リポジトリの依存定義と lock は正しく、別の完全新規環境で全検証済み。
+  稼働プロセスを止める次回メンテナンス時に `uv sync --frozen` を行えばよい。
+
+本番 `ir_database.db`、本番 `jobs.db`、本番ログ、ESP32 実機には変更を加えていない。
+
 ### ⚠️ 旧実装は削除済み
 
 - **`ir_remocon/ir_db_server.py` は削除した**（Phase 5）。旧 UI への退路は
   **git 履歴と `backup_before_refactor/index.html` のみ**。
-- **`ir_remocon/ir_request_test.py` は残してある。** ESP32 に直接 POST する
-  実機用スクリプトで「旧 API 前提」ではないため削除対象から外した。ただし
-  死んだ IP `192.168.1.16`（不具合 E の元凶そのもの）を直書きしており、
-  `requests`（依存に無い）を import し、トップレベルで即実行される。
-  **信号 2 件の raw データの平文コピーでもある。** 扱いは Phase 7 で判断すること。
+- **`ir_remocon/ir_request_test.py` は Phase 7 で削除した。** 死んだ IP
+  `192.168.1.16` を直書きし、依存に無い `requests` を import し、import だけで
+  実機へ連続送信する危険なスクリプトだった。波形は現行 DB と退避済み DB に残っている。
 - **予約機能は Phase 4 で新サーバに載った。** 旧 `jobs.db` の 7 件はバックアップのうえ
   破棄済み（`backup_before_refactor/jobs.phase4-20260818-213446.db`）。現在 `jobs.db` は空。
 - 検証で host を変えたいときは `IR_DB_PATH` で別 DB を作り、
@@ -564,6 +613,7 @@ uv run pytest -v                          # 単体テスト（統合は既定で
 uv run pytest -m integration -v           # 統合テスト（スタブを実ソケットで起動）
 uv run pytest tests/test_frontend_assets.py -q   # フロントの回帰ガードだけ（1 秒）
 uv run python tools/fake_esp32.py --port 8080   # ESP32 スタブ（検証用）
+uv run python tools/migrate_jobs.py <jobs.db>   # 旧予約の読み取り専用棚卸し
 uv add <pkg>                              # 依存追加（pip は使わない）
 ```
 
@@ -585,7 +635,7 @@ cd esp\ir_remocon
 |---|---|
 | `--send-duration 15` | 読み取りタイムアウト（504・結果不明）を再現 |
 | `--send-status 202` | ステータスだけ 202 に差し替える（応答は送信完了まで待つ） |
-| `--async-send` | **ファーム v2.0.0 と同じ「キュー投入して即 202」。** 送信完了を待たない。`queue_len` / `last_send_ok` が実機同様に動く |
+| `--async-send` | **ファーム v2.2.0 と同じ「キュー投入して即 202」。** 送信完了を待たない。`queue_len` / `last_send_ok` が実機同様に動く |
 | `--fail-mode busy\|error\|bad-request\|hang\|drop` | 各種失敗。`--fail-rate 0.3` で確率的にも |
 | `--no-reject-concurrent` | ESP 側の 409 を無効化し、サーバ側の直列化だけを見る |
 | `--callback-fail` | 学習コールバックを送らない（「学習が時々失敗する」の切り分け用） |
@@ -646,7 +696,7 @@ cd ~/python_works/ir_remocon && uv sync --frozen && uv run python -m ir_remocon.
 | 本番サーバ | `uncre-switch`（Linux, Python 3.10）。**LAN: `192.168.1.110`（固定）** / Tailscale: `100.95.100.1` |
 | 本番の配置先 | `/home/uncre/python_works/ir_remocon/` |
 | 開発機（このリポジトリ） | Windows 11。LAN: `192.168.1.100` |
-| ESP32 | 直近の稼働 IP は `192.168.1.4`（DHCP）。**現在停止中**。ファーム v2.0.0 は **`192.168.1.50` 固定**で焼く設定になっている（書き込み前に DHCP 割当範囲外か要確認） |
+| ESP32 | firmware v2.2.0。**`192.168.1.50` 固定**の設定で実機 A/B 検証済み。DHCP 範囲外であることはネットワーク変更時にも再確認する |
 | スマホからの操作 | Tailscale 経由（`xiaomi-13t-pro` = `100.104.223.25`）。**外出先からフロントを開く使い方をしている** |
 
 > **注意**: 外部アクセスが Tailscale 経由である以上、フロントは LAN 外からも開かれる。
@@ -761,14 +811,14 @@ cd ~/python_works/ir_remocon && uv sync --frozen && uv run python -m ir_remocon.
   `templates/index.html` は骨格のみ、`static/style.css` と `static/js/*.js`（13 モジュール）。
   ES modules をブラウザがそのまま読む。**バンドラ・トランスパイラ・npm は入れない。**
 
-### 次フェーズへの具体的な申し送り
+### 今後の具体的な申し送り
 
-#### Phase 6 は完了した（下は Phase 7 / 実機作業向け）
+#### Phase 1〜7 は完了した
 
-ファームの実装・設計判断・検証の限界は「Phase 6 で完成したもの」の節を参照。
-API 側の申し送りは Phase 3 / 4 の節に残してある内容がそのまま有効。
+ファームの実装・設計判断・検証の限界は「Phase 6 で完成したもの」、運用整備は
+「Phase 7 で完成したもの」を参照する。API 側の Phase 3 / 4 の不変条件も引き続き有効。
 
-#### 実機が戻ったら最優先で見ること
+#### 今後の実機調整で見ること
 
 1. ✅ **学習した信号がそのまま効くことを 2026-09-02 に実機確認済み。**
    先頭マークずれ修正を維持した無フィルタ版 `2.2.0-rc1` で学習から再送信まで成功した。
@@ -780,30 +830,24 @@ API 側の申し送りは Phase 3 / 4 の節に残してある内容がそのま
 4. 連打時に機器側 409 がどれくらい出るかを実測し、必要なら `IR_MIN_SEND_INTERVAL`
    （既定 0.3 秒）を実際の放射時間に合わせて調整する。
 
-#### Phase 7（周辺整備）
+#### Phase 7 後の運用・保留事項
 
-- **受信バッファ溢れをサーバに通知する経路の新設を検討すること。** 現在は
-  コールバックを送らないので UI 上は「タイムアウト」に見え、`last_recv_overflow` を
-  設定タブで見るまで区別できない。`IRSignalCallback` は `data` を
-  `min_length=1` で必須にしているため、エラー通知には**サーバ側の契約変更**
-  （モデル・ルータ・テスト・フロント）が要る。
+- ルート `README.md` を運用手順の正本として使う。現在ローカルで稼働中のサーバを止める
+  メンテナンス時に `uv sync --frozen` を実行し、既存 `.venv` へ依存削除を反映する。
+- 本番反映前に `df -h`、DB 2 件のバックアップ、旧 jobs DB の棚卸し、
+  `IR_ADVERTISE_HOST=192.168.1.110` を確認する。
+- **受信バッファ溢れの専用通知は、実際に再発した場合だけ検討する。** 現在は
+  設定タブの `last_recv_overflow` で切り分けられる。追加する場合は firmware・モデル・
+  ルータ・テスト・フロントを一つの契約変更として扱う。
 - **`esp/ir_remocon/platformio.ini` はビルド検証専用。** 実機書き込みは Arduino IDE で
   行う想定なので、ライブラリのバージョンは ini と IDE の両方で揃える必要がある。
-  README を書くときに ArduinoJson **v6 系**指定を明記すること。
+  ArduinoJson は README 記載どおり **v6 系**を使う。
 - **Flash 使用率が 80.7% ある。** 機能追加でパーティションが溢れる可能性があるので、
   追加時は `pio run` のサイズ表示を必ず確認すること。
-
-- **`jinja2` 依存が未使用になった。** 唯一の利用者だった `ir_db_server.py` を
-  Phase 5 で削除した。新実装は `FileResponse` で HTML を返すだけ。
-  `uv remove jinja2` は `uv.lock` の再生成を伴うので、他の整備とまとめて行うこと。
-- **`ir_remocon/ir_request_test.py` の扱いを決めること。** 死んだ IP
-  `192.168.1.16` を直書きし、依存に無い `requests` を import し、トップレベルで
-  即実行される。ただし**信号 2 件の raw データの平文コピー**でもある
-  （DB とそのバックアップにも入っているので、削除しても失われはしない）。
 - `ir_db_server.log` というログ名は**意図的に据え置いた**。不具合 D の証拠が
-  入っている既存ログと同じ名前を保つため。改名するなら既存ログの扱いも決めること。
-- `tools/migrate_jobs.py` は未作成（Phase 4 で旧 7 件は手作業で退避済みなので、
-  必要性は下がっている）。
+  入っている既存ログと同じ名前を保つため。改名するなら既存ログも同時に扱う。
+- 次の Phase は未定。新しい機能フェーズを始める場合は、Phase 7 と同じく現状を再調査し、
+  個別計画を合意してから着手する。
 
 ---
 
