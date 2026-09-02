@@ -1,6 +1,6 @@
 /*
  * ESP32 Smart IR Remote Firmware
- * Version: 2.1.0
+ * Version: 2.2.0
  *
  * サーバ側 (FastAPI / ir-remocon) との契約は AGENTS.md と
  * tools/fake_esp32.py が正。**このファームを直す前に必ず両方を読むこと。**
@@ -13,6 +13,10 @@
  *   受信したら callback_url へ POST {"format":"raw","freq":38,"data":[...]}
  *
  * Changelog:
+ * - v2.2.0 (実機 A/B 検証済み):
+ *   - 受信不安定の原因が GPIO 配線 (回路は 13、ファームは 15) の不一致と判明。
+ *   - v2.1.0 で追加した rawlen の最小長フィルタと reject 統計を撤去。
+ *   - 波形の境界チェック、溢れ検知、採用不能時の待受継続は維持。
  * - v2.1.0 (Phase 6, 実機検証で判明した学習の不安定さに対処):
  *   - **ノイズで学習が終わってしまう問題を修正。** 最初の decode() でセッションを
  *     打ち切っていたため、照明のちらつき等が 1 発入るだけで学習ウィンドウを
@@ -78,7 +82,7 @@ const uint16_t IR_SEND_PIN = 4;   // 赤外線 LED
 // 2. 定数
 // =============================================================================
 
-static const char* FIRMWARE_VERSION = "2.1.0";
+static const char* FIRMWARE_VERSION = "2.2.0";
 
 static const uint16_t RECV_BUFFER_SIZE = 1024;  // IRrecv の生バッファ (要素数)
 static const uint8_t  RECV_TIMEOUT_MS  = 50;    // 信号終端とみなす無音時間
@@ -89,17 +93,6 @@ static const uint16_t MAX_RAW_LEN = 1024;
 
 // リクエストボディの上限。1024 要素なら実測 7KB 程度なので十分な余裕がある。
 static const size_t MAX_BODY_LEN = 16384;
-
-// 学習で「信号」とみなす最小の生要素数。
-//
-// ★ これを入れないと部屋に置いてあるだけで学習が成立してしまう。
-//   IRrecv の既定 kUnknownThreshold は **6**（IRrecv.h:28）で、蛍光灯・LED 照明・
-//   日光のちらつきが容易に 6 要素を超えるため、decode() がノイズで成功を返す。
-//   実在するリモコン信号は最短の Sony 12bit でも rawlen が 26 程度あるので、
-//   24 なら正規の信号を落とさずにノイズだけを弾ける。
-//   環境ノイズが強くて足りない場合はシリアルの「ノイズとして破棄」行に出る
-//   実測値を見て上げること。
-static const uint16_t MIN_ACCEPT_RAW_LEN = 24;
 
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 10000;  // 1 回の接続試行の上限
 static const uint32_t WIFI_CHECK_INTERVAL_MS  = 10000;  // loop() での切断チェック間隔
@@ -127,9 +120,6 @@ static volatile uint32_t sendCount        = 0;
 static volatile bool     lastSendOk       = true;   // 直近の送信要求が loop() で完了したか
 static volatile uint16_t lastRecvLen      = 0;      // 直近の受信要素数 (溢れ判定の材料)
 static volatile bool     lastRecvOverflow = false;  // 直近の受信でバッファが溢れたか
-// 破棄した捕捉の統計。環境ノイズの強さを画面から見るための材料。
-static volatile uint32_t rejectCount      = 0;      // 起動以降に破棄した捕捉の数
-static volatile uint16_t lastRejectLen    = 0;      // 直近に破棄した捕捉の生要素数
 static bool usingStaticIp = false;
 
 // --- 受信モード用 ---
@@ -314,8 +304,7 @@ static void maintainWiFi() {
 // [GET] /status — モードを問わず必ず即答すること。
 // サーバの get_status() は 3 秒しか待たない (esp32.py の _status_timeout)。
 static void handleGetStatus(AsyncWebServerRequest* request) {
-  // キーを足したらここも増やすこと (溢れると JSON が途中で切れる)。
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<640> doc;
   Mode m = currentMode;
 
   doc["status"] = "ok";
@@ -339,10 +328,6 @@ static void handleGetStatus(AsyncWebServerRequest* request) {
   doc["rssi"]               = WiFi.RSSI();
   doc["last_recv_len"]      = lastRecvLen;
   doc["last_recv_overflow"] = lastRecvOverflow;
-  // 破棄した捕捉の統計。reject_count がじりじり増えるなら環境ノイズが乗っている。
-  doc["reject_count"]       = rejectCount;
-  doc["last_reject_len"]    = lastRejectLen;
-  doc["min_accept_raw_len"] = MIN_ACCEPT_RAW_LEN;
 
   String out;
   serializeJson(doc, out);
@@ -476,16 +461,6 @@ static void postCallback(const String& body) {
 // 捕捉を 1 件処理する。**採用してコールバックまで済ませたときだけ true**。
 // false を返したときは呼び出し側が待受を続ける (セッションを終了しない)。
 static bool handleReceivedSignal() {
-  // --- ノイズの門前払い ---
-  // ここで弾けなかった分がそのまま「学習したのに変な信号」になる。
-  if (results.rawlen < MIN_ACCEPT_RAW_LEN) {
-    rejectCount++;
-    lastRejectLen = results.rawlen;
-    Serial.printf("ノイズとして破棄 (rawlen=%u < %u)。待受を続けます [累計 %lu 件]\n",
-                  results.rawlen, MIN_ACCEPT_RAW_LEN, (unsigned long)rejectCount);
-    return false;
-  }
-
   Serial.printf("赤外線信号を受信しました (rawlen=%u)\n", results.rawlen);
 
   // results.overflow は IRrecv 側で生バッファ (RECV_BUFFER_SIZE) が
@@ -527,8 +502,6 @@ static bool handleReceivedSignal() {
     //   旧実装はここで黙って途中まで送っていたため、「学習は成功したのに
     //   送信しても家電が反応しない」という形でしか気づけなかった。
     lastRecvOverflow = true;
-    rejectCount++;
-    lastRejectLen = results.rawlen;
     // 待受は続ける。溢れの多くは直前のノイズが混ざったせいなので、
     // 押し直してもらえば次の捕捉で成功する見込みがある。
     Serial.printf("受信バッファが溢れました (rawlen=%u, 要素数=%u)。"
@@ -549,8 +522,6 @@ static bool handleReceivedSignal() {
 
   if (doc.overflowed()) {
     lastRecvOverflow = true;
-    rejectCount++;
-    lastRejectLen = results.rawlen;
     Serial.printf("JSON バッファが溢れました (要素数=%u)。破棄して待受を続けます。\n", count);
     return false;
   }
@@ -575,10 +546,6 @@ void setup() {
   Serial.printf("ir-remocon ESP32 firmware v%s\n", FIRMWARE_VERSION);
 
   irsend.begin();
-
-  // ライブラリ側でも短すぎる UNKNOWN を成功扱いしないようにする。
-  // 既定は 6 要素しかなく、環境ノイズがそのまま「受信成功」になる。
-  irrecv.setUnknownThreshold(MIN_ACCEPT_RAW_LEN);
 
   connectToWiFi();
 
@@ -632,11 +599,8 @@ void loop() {
   // --- 受信 ---
   if (currentMode == MODE_RECEIVE) {
     if (irrecv.decode(&results)) {
-      // ★ 最初の捕捉で打ち切らないこと。
-      //   照明のちらつき等のノイズでも decode() は成功を返すので、ここで
-      //   無条件に MODE_IDLE へ落とすと「ノイズが 1 発入っただけで
-      //   15 秒の学習ウィンドウが終わる」= ユーザーにはタイムアウトに見える。
-      //   採用できなかった捕捉は捨てて、タイムアウトまで聞き続ける。
+      // メモリ確保失敗やバッファ溢れで採用できなかった場合は、その捕捉だけを
+      // 捨ててタイムアウトまで待受を続ける。
       if (handleReceivedSignal()) {
         irrecv.disableIRIn();
         currentMode = MODE_IDLE;
@@ -649,8 +613,7 @@ void loop() {
       currentMode = MODE_IDLE;
       // タイムアウトはサーバへ通知しない。サーバ側が学習セッションの
       // expires_at で自前に判定している (routers/learn.py)。
-      Serial.printf("受信モードがタイムアウトしました (破棄した捕捉 累計 %lu 件)。"
-                    "待機モードに戻ります\n", (unsigned long)rejectCount);
+      Serial.println("受信モードがタイムアウトしました。待機モードに戻ります");
     }
   }
 }

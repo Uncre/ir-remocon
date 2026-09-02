@@ -35,6 +35,7 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 2026-09-02 に `ir-receive-debug` を `master` へ統合した。
 
 - 現在の作業ブランチ: `master`
+- 最新コミット: `5d2b4aa GPIOピン番号を修正`（受信回路の OUT に合わせて `IR_RECV_PIN` を GPIO13 に修正）
 - 統合コミット: `b641e0b Merge branch 'ir-receive-debug'`
 - `528bfb6`: firmware v2.1.0 のノイズ除外・受信待受継続・`secrets.h.example`
 - `2641139`: `esp/**/secrets.h` を除外する `.gitignore`
@@ -90,13 +91,14 @@ Git の状態は変わり得るため、上記を盲信せず毎回コマンド�
 
 ### ESP32 ファーム
 
+- 赤外線受信モジュールの OUT は GPIO13。ファームの `IR_RECV_PIN` と実配線を必ず一致させる。
 - `callback_url` はサーバから受け取った値をそのまま使う。信号名を付加したり再構築しない。
 - 送信の排他は「バッファコピー完了後に `pendingSend = true`」「送信完了後に最後に `MODE_IDLE`」の順序で成立している。順番を変えない。
 - `request->_tempObject` 用の受信バッファは `malloc` で確保する。ライブラリ側が `free()` する。
 - 大きい JSON document はヒープに置く。AsyncTCP タスクのスタックへ載せない。
 - 受信データが溢れた場合は切り詰めて学習させない。
 - ArduinoJson は v6 系を使う。PlatformIO の Flash 使用率も機能追加ごとに確認する。
-- ファーム v2.1.0 の実機検証結果は未確定。詳細は `docs/refactoring/HANDOFF.md` に追記してから状態を更新する。
+- firmware v2.2.0 は GPIO13 で、v2.1.0 の長さフィルタを外した構成も実機 A/B 検証済み。詳細は `docs/refactoring/HANDOFF.md` を参照する。
 
 ## 検証コマンド
 
