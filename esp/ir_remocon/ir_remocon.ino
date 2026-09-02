@@ -71,7 +71,7 @@ IPAddress DNS1     (192, 168, 1,   1);
 const char* HOSTNAME = "ir-remocon";
 
 // --- GPIO ピン ---
-const uint16_t IR_RECV_PIN = 15;  // 赤外線受信モジュール
+const uint16_t IR_RECV_PIN = 13;  // 赤外線受信モジュール
 const uint16_t IR_SEND_PIN = 4;   // 赤外線 LED
 
 // =============================================================================
