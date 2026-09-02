@@ -36,7 +36,7 @@ Phase の計画・実装・レビューを担当する場合は、この文書�
 | 4 | スケジューラ堅牢化（health / 中断可能アラーム / メタ情報） | ✅ **完了・検証済み** (2026-08-19) |
 | 5 | フロントエンド（タブUI・static分割・体感バグ修正）**+ 学習 API** | ✅ **完了・検証済み** (2026-08-19) |
 | 6 | ESP32 ファーム（`esp/ir_remocon/ir_remocon.ino`）※書き込みは後日 | ✅ **完了・ビルド検証済み** (2026-08-20) |
-| 6 follow-up | 受信ノイズ除外・待受継続・秘密情報の分離（firmware v2.1.0） | ⚠️ **`ir-receive-debug` のみ・`master` 未統合** (2026-08-22) |
+| 6 follow-up | 受信ノイズ除外・待受継続・秘密情報の分離（firmware v2.1.0） | ✅ **`master` 統合・ビルド検証済み、実機未検証** (2026-09-02) |
 | 7 | 周辺整備（README / migrate_jobs / 追加テスト） | ⬜ 未着手 ← **次はここ** |
 
 > `tools/fake_esp32.py`（ESP32 スタブ）は Phase 2 で作成済み。**以降の検証はこれを使う。**
@@ -442,7 +442,7 @@ Arduino IDE の「スケッチ名 == 親フォルダ名」規約に合わせた�
 - `freq` は受信時 38 固定のまま。IRremoteESP8266 に搬送波周波数の測定手段が無く、
   サーバも `freq` を保存していない（`learn.py:304-309` は既定値と違えば WARNING を出すだけ）。
 
-#### Phase 6 後の追加作業（`ir-receive-debug`、未統合）
+#### Phase 6 後の追加作業（`ir-receive-debug` → `master` 統合済み）
 
 Phase 6 のコミット `b756b56` から `ir-receive-debug` ブランチを分岐し、
 `528bfb6 閾値以下長さの信号を破棄する` で firmware v2.1.0 を追加している。
@@ -453,14 +453,28 @@ Phase 6 のコミット `b756b56` から `ir-receive-debug` ブランチを分�
 - Wi-Fi 認証情報を `esp/ir_remocon/secrets.h` に分離し、追跡対象の
   `esp/ir_remocon/secrets.h.example` を追加。
 
-同じ分岐元から `master` は `2641139 gitignoreを編集` に進んでおり、
-`esp/**/secrets.h` を無視する変更だけを持つ。2026-09-02 時点で両ブランチは未統合で、
-`ir-receive-debug` の作業ツリーには別内容の `.gitignore` 変更も未コミットで残っている。
-したがって、現在の `ir-receive-debug` をクリーンに checkout しただけでは
-`secrets.h` が無視される保証がない。統合方法を決めるまで merge / cherry-pick / reset を行わないこと。
+同じ分岐元から `master` は `2641139 gitignoreを編集` に進み、
+`esp/**/secrets.h` を無視する変更を持っていた。Codex 移管文書を `d263b84` として
+`ir-receive-debug` 上で独立コミットした後、2026-09-02 に merge commit
+`b641e0b Merge branch 'ir-receive-debug'` で `master` へ統合した。
 
-この follow-up の実機結果・閾値 24 の妥当性・PlatformIO ビルド結果は本引き継ぎ文書に
-記録されていないため、未検証として扱う。
+統合前の未コミット `.gitignore` は `pre-merge user .gitignore change` という名前で
+stash に保全してある。これは全階層の `secrets.h` を無視する広い規則だったため、
+最終状態では `master` の限定的な `esp/**/secrets.h` を採用した。実在する
+`esp/ir_remocon/secrets.h` は内容を開かず、ignore 対象であることだけを確認した。
+
+統合後の検証結果:
+
+- `uv run pytest -q`: **226 passed / 11 deselected**。既知の Starlette 非推奨警告 1 件。
+- firmware v2.1.0 の `pio run`: **SUCCESS**。
+- RAM: **15.2%**（49,780 / 327,680 bytes）
+- Flash: **80.7%**（1,057,745 / 1,310,720 bytes）
+- 実機への書き込み、赤外線の学習・送信、閾値 24 の妥当性は未検証。
+
+未追跡の `esp/ir_remocon/test.ino` が同じスケッチディレクトリにあり、通常の
+`pio run` はこれもコンパイルして `IRremote.hpp` 不足で失敗する。ファーム本体の確認では
+このファイルを一時的に別拡張子へ退避し、ビルド後に SHA-256 一致を確認して復元した。
+ユーザーファイルなので、明示依頼なしに変更・削除・コミットしないこと。
 
 #### Phase 6 の検証の限界（実機が戻ったら確認すること）
 

@@ -32,18 +32,24 @@ ESP32 + FastAPI による自宅用スマート赤外線リモコン。
 
 ## 現在の Git 状態に関する注意
 
-2026-09-02 の文書整理開始時点では、`master` と `ir-receive-debug` は Phase 6 のコミット
-`b756b56` から別々に 1 コミット進んでいる。
+2026-09-02 に `ir-receive-debug` を `master` へ統合した。
 
-- `master`: `2641139 gitignoreを編集`
-- `ir-receive-debug`: `528bfb6 閾値以下長さの信号を破棄する`
-- 現在の作業ブランチ: `ir-receive-debug`
+- 現在の作業ブランチ: `master`
+- 統合コミット: `b641e0b Merge branch 'ir-receive-debug'`
+- `528bfb6`: firmware v2.1.0 のノイズ除外・受信待受継続・`secrets.h.example`
+- `2641139`: `esp/**/secrets.h` を除外する `.gitignore`
+- `d263b84`: Codex 向け文書移管
+- `ir-receive-debug` ブランチ名は削除せず残してあるが、内容は `master` に統合済み。
 - リモート: 未設定
 
-`ir-receive-debug` にはファーム v2.1.0 のノイズ除外、受信待受継続、
-`secrets.h.example` 導入がある。一方、`master` の `.gitignore` 修正はこのブランチへ未統合。
-さらに作業ツリーにはユーザーによる未コミットの `.gitignore` 変更がある。
-この状態を解消する操作は文書整理の範囲外であり、勝手に merge / cherry-pick / commit しない。
+統合前の未コミット `.gitignore` は `pre-merge user .gitignore change` という名前で
+stash に保全してある。最終状態では `master` の限定的な除外規則を採用し、実ファイル
+`esp/ir_remocon/secrets.h` は追跡しない。
+
+未追跡の `esp/ir_remocon/test.ino` はユーザーファイルとして変更・コミットしない。
+`platformio.ini` の `src_dir = .` により通常の `pio run` ではこのファイルもコンパイル対象に
+なり、不足ライブラリ `IRremote.hpp` で失敗する。ファーム本体だけを検証するときは
+`test.ino` を安全に一時退避して必ず復元するか、先にユーザーへ扱いを確認する。
 
 Git の状態は変わり得るため、上記を盲信せず毎回コマンドで再確認すること。
 
