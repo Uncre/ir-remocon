@@ -221,24 +221,6 @@ $env:PYTHONIOENCODING = "utf-8"
 意味します。UI 上は学習タイムアウトに見えるため、学習失敗時は設定タブの接続テスト結果も
 確認してください。
 
-## 本番 Linux への反映
-
-本番 `uncre-switch` は Python 3.10、配置先は `/home/uncre/python_works/ir_remocon/`、
-LAN 側アドレスは `192.168.1.110` です。
-
-1. 稼働中の旧サーバを停止する。
-2. `df -h` で空き容量を確認する。過去に `database or disk is full` で予約が停止した記録がある。
-3. `ir_database.db` と `jobs.db` をバックアップする。
-4. 古い jobs DB が残っていれば、前述の移行ツールで棚卸し・退避する。
-5. `uv sync --frozen` を実行する。
-6. `IR_ADVERTISE_HOST=192.168.1.110` をサービスの環境へ設定する。
-7. worker 1 で `uv run ir-remocon` を起動する。
-8. `/api/health` の `ok` と `scheduler_running`、設定タブの ESP32 接続テストを確認する。
-
-`IR_ADVERTISE_HOST` に Tailscale IP や `127.0.0.1` を指定すると、LAN 上の ESP32 から
-学習コールバックへ到達できません。外出先から UI を Tailscale で開く場合でも、この値は
-ESP32 から見える LAN 側アドレスにします。
-
 ## 開発文書
 
 リファクタリングの実装履歴、設計上の不変条件、各 Phase の計画は
