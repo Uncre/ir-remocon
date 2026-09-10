@@ -851,6 +851,22 @@ cd ~/python_works/ir_remocon && uv sync --frozen && uv run python -m ir_remocon.
 
 ---
 
+## 2026-09-09 初心者向けESP32単体版（既存Phaseとは独立）
+
+ユーザーが承認した構成で`esp/ir_remocon_standalone/`を追加した。
+HTML配信・15秒学習・12信号のLittleFS永続化・送信・削除をESP32内で完結させる。
+既存FastAPI、firmware v2.2.0、本番DB、個人のsecrets.hは変更していない。
+独自パーティションを使うため、既存版と同じ実機へ書けばその実機は単体版になる。
+
+- 進行状況: 初版実装とビルド・ホストテスト完了、実機未検証。
+- ビルド: SUCCESS、Flash 957,001 / 2,097,152 bytes (45.6%)、RAM 50,584 / 327,680 bytes (15.4%)。
+- 埋め込みUIの模擬DOMテスト、保存処理本体の模擬FSテスト成功。既存フロント回帰27件成功。
+- 検証は本番DBを使わず実施。実ブラウザ表示、実HTTP、USB書き込み、送受信、永続化は未検証。
+- 初心者向け部品・配線・書き込み・実機チェックは
+  [単体版README](../../esp/ir_remocon_standalone/README.md)を参照。
+- 設計差分、検証範囲、残作業は
+  [単体版検証記録](../../esp/ir_remocon_standalone/VALIDATION.md)を参照。
+
 ## 引き継ぎメモの更新義務
 
 **フェーズを 1 つ終えたら、このファイルの「進行状況」表と該当セクションを必ず更新すること。**
