@@ -869,6 +869,18 @@ HTML配信・15秒学習・12信号のLittleFS永続化・送信・削除をESP3
 
 ## 引き継ぎメモの更新義務
 
+### 2026-09-10 単体版のmDNS名設定・教材ZIP更新
+
+- スケッチ冒頭の `MDNS_HOSTNAME`（既定 `ir-remocon`）をWi-Fi hostnameとmDNSに共用。
+- mDNS開始成功時に `.local` URL、失敗時にIP利用の案内をシリアル表示。
+- ArduinoJsonをESPAsyncWebServerより先に読む既存修正（84ab0dd）を維持して配布ZIPへ反映。
+  Arduino IDEで旧順序はArduinoJsonの依存検出漏れが発生した。6.21.5の未導入が原因ではなかった。
+- PlatformIO compile_check成功。Flash 957,101 / 2,097,152、RAM 50,584 / 327,680 bytes。
+  UIのNodeテスト成功。今回のmDNS変更は実機・Arduino IDE全体ビルド未検証。
+- 配布先は独立プロジェクト `../electronics-tour-slides/downloads/ir_remocon_standalone.zip`。
+  コード5ファイル＋secrets.h.example＋教材READMEのみ。秘密情報・DB・ビルド成果物は含めない。
+- 本番DB、個人のsecrets.h、Downloadsの展開済みコピーは変更しない。
+
 **フェーズを 1 つ終えたら、このファイルの「進行状況」表と該当セクションを必ず更新すること。**
 次のチャットはこのファイルとプランファイルしか手がかりが無い。
 新しく判明した事実（特に「未解決の疑問」の解消や、推測が外れたこと）も必ず書き残す。

@@ -1,5 +1,14 @@
 # 初版の検証記録 — 2026-09-09
 
+## 2026-09-10追記：mDNS設定定数
+
+`MDNS_HOSTNAME`をスケッチ冒頭に追加。WiFi.setHostnameとMDNS.beginに共用し、
+mDNS成功時は設定名のURL、失敗時はIP利用の案内を表示する。
+PlatformIO compile_check成功：Flash 957,101 / 2,097,152 bytes、RAM 50,584 / 327,680 bytes。
+`node tests/ui.test.cjs`成功。新しい名前での実機アクセス・Arduino IDE全体ビルドは未検証。
+既存のArduinoJson先行includeを配布ZIPへ反映（旧ZIPはIDEの依存検出漏れが起きた）。
+以下は初版時点の記録。
+
 ユーザー承認済みの単体版構成を`esp/ir_remocon_standalone/`へ実装。
 既存のfirmware v2.2.0のraw変換・GPIO13受信・GPIO4送信の考え方を引き継ぎ、
 サーバ連携をESP32内の保存とAPIへ置き換えた。既存コード、DB、Wi-Fi秘密情報は変更していない。

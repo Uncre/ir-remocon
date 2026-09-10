@@ -2,6 +2,11 @@
  * Derived from ir-remocon firmware v2.2.0 (GPIO13 receive / GPIO4 send).
  * HTTP callbacks, SQLite and the Python server are replaced by local storage.
  */
+// ブラウザーで開く名前: http://ir-remocon.local/
+// .local は付けず、半角英数字とハイフンで指定（先頭・末尾は英数字）。
+// 複数台では ir-remocon-01 など、各自で違う名前にしてください。
+constexpr char MDNS_HOSTNAME[] = "ir-remocon";
+
 #include <ArduinoJson.h>
 #include <IRremoteESP8266.h>
 #include <Arduino.h>
@@ -179,7 +184,7 @@ void setup() {
   storageOk = storeBegin();
   Serial.printf("Storage: %s\n", storageOk ? "OK" : "ERROR (not erased)");
   irsend.begin();
-  WiFi.mode(WIFI_STA); WiFi.setHostname("ir-remocon");
+  WiFi.mode(WIFI_STA); WiFi.setHostname(MDNS_HOSTNAME);
   WiFi.persistent(false); WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
@@ -205,7 +210,12 @@ void loop() {
     if (now && !connected) {
       Serial.printf("Open http://%s/\n", WiFi.localIP().toString().c_str());
       MDNS.end();
-      if (MDNS.begin("ir-remocon")) MDNS.addService("http", "tcp", 80);
+      if (MDNS.begin(MDNS_HOSTNAME)) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.printf("Open http://%s.local/\n", MDNS_HOSTNAME);
+      } else {
+        Serial.println("mDNS startup failed; use the IP address above.");
+      }
     }
     if (!now && millis() % 10000 < 1000) { Serial.println("Waiting for Wi-Fi (2.4 GHz)..."); WiFi.reconnect(); }
     connected = now;
